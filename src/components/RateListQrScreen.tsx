@@ -19,6 +19,7 @@ export const RateListQrScreen: React.FC = () => {
     openBillEditorFromOrder,
     rateListSubTab,
     setRateListSubTab,
+    activeShopId,
     shopInfo,
     language,
     t,
@@ -36,7 +37,7 @@ export const RateListQrScreen: React.FC = () => {
   const [custMobile, setCustMobile] = useState('');
   const [orderSentSuccess, setOrderSentSuccess] = useState<string | null>(null);
 
-  const shopId = shopInfo.id || 'yk-electrical-default';
+  const shopId = activeShopId || shopInfo.id || '';
   const catalogUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
     return `${window.location.origin}${window.location.pathname}#/order?shop=${encodeURIComponent(shopId)}`;

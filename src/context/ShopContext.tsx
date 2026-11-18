@@ -154,6 +154,17 @@ function getShopStorageKeys(shopId: string) {
   };
 }
 
+function isYkElectricalShopName(name?: string): boolean {
+  const n = (name || '').trim().toLowerCase();
+  if (!n) return false;
+  return (
+    n.includes('y.k') ||
+    n.includes('y k') ||
+    n.includes('yk electric') ||
+    n.includes('y-k-electric')
+  );
+}
+
 function detectExistingDeviceShopId(): string | null {
   try {
     // 1. Check if any shop-scoped data already exists on this device
@@ -163,7 +174,25 @@ function detectExistingDeviceShopId(): string | null {
       const match = key.match(/^yk_shop_(.+)_(shop_info|products|bills|suppliers|orders|day_closing)_v1$/);
       if (match && match[1]) {
         const candidateId = match[1].trim().toLowerCase();
-        if (candidateId) return candidateId;
+        if (candidateId) {
+          // If candidateId was wrongly assigned y-k-electricals-8742 for a different shop name, fix it without losing data
+          if (candidateId === LEGACY_YK_SHOP_ID) {
+            try {
+              const rawInfo = localStorage.getItem(getShopStorageKeys(candidateId).SHOP_INFO);
+              if (rawInfo) {
+                const parsed = JSON.parse(rawInfo);
+                if (parsed?.name && !isYkElectricalShopName(parsed.name)) {
+                  const properId = generateShopId(parsed.name);
+                  migrateShopScopeWithoutDeleting(candidateId, properId, parsed);
+                  return properId;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+          return candidateId;
+        }
       }
     }
 
@@ -181,8 +210,20 @@ function detectExistingDeviceShopId(): string | null {
         const rawInfo = localStorage.getItem(STORAGE_KEYS.SHOP_INFO);
         if (rawInfo) {
           const parsed = JSON.parse(rawInfo);
-          if (parsed?.id && typeof parsed.id === 'string' && parsed.id.trim()) {
-            return parsed.id.trim().toLowerCase();
+          const existingId =
+            parsed?.id && typeof parsed.id === 'string' ? parsed.id.trim().toLowerCase() : '';
+          const shopName = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
+
+          if (existingId && (existingId !== LEGACY_YK_SHOP_ID || isYkElectricalShopName(shopName))) {
+            return existingId;
+          }
+          if (shopName && !isYkElectricalShopName(shopName)) {
+            const properId = generateShopId(shopName);
+            localStorage.setItem(
+              STORAGE_KEYS.SHOP_INFO,
+              JSON.stringify({ ...parsed, id: properId })
+            );
+            return properId;
           }
         }
       } catch {
@@ -196,11 +237,58 @@ function detectExistingDeviceShopId(): string | null {
   return null;
 }
 
+function migrateShopScopeWithoutDeleting(
+  fromShopId: string,
+  toShopId: string,
+  shopInfoObj?: Partial<ShopInfo>
+) {
+  if (!fromShopId || !toShopId || fromShopId === toShopId) return;
+  try {
+    const src = getShopStorageKeys(fromShopId);
+    const dst = getShopStorageKeys(toShopId);
+    const copyIfPresent = (srcKey: string, dstKey: string) => {
+      const val = localStorage.getItem(srcKey);
+      if (val !== null && localStorage.getItem(dstKey) === null) {
+        localStorage.setItem(dstKey, val);
+      }
+    };
+    copyIfPresent(src.PRODUCTS, dst.PRODUCTS);
+    copyIfPresent(src.BILLS, dst.BILLS);
+    copyIfPresent(src.SUPPLIERS, dst.SUPPLIERS);
+    copyIfPresent(src.ORDERS, dst.ORDERS);
+    copyIfPresent(src.DAY_CLOSING, dst.DAY_CLOSING);
+    copyIfPresent(src.SETUP_DONE, dst.SETUP_DONE);
+
+    const rawInfo = localStorage.getItem(src.SHOP_INFO);
+    const parsedInfo = shopInfoObj || (rawInfo ? JSON.parse(rawInfo) : {});
+    localStorage.setItem(dst.SHOP_INFO, JSON.stringify({ ...parsedInfo, id: toShopId }));
+  } catch {
+    // ignore
+  }
+}
+
 function readActiveShopId(): string | null {
   try {
     const persisted = localStorage.getItem(ACTIVE_SHOP_KEY);
     if (persisted && persisted.trim()) {
-      return persisted.trim().toLowerCase();
+      const id = persisted.trim().toLowerCase();
+      if (id === LEGACY_YK_SHOP_ID) {
+        try {
+          const rawInfo = localStorage.getItem(getShopStorageKeys(id).SHOP_INFO);
+          if (rawInfo) {
+            const parsed = JSON.parse(rawInfo);
+            if (parsed?.name && !isYkElectricalShopName(parsed.name)) {
+              const properId = generateShopId(parsed.name);
+              migrateShopScopeWithoutDeleting(id, properId, parsed);
+              localStorage.setItem(ACTIVE_SHOP_KEY, properId);
+              return properId;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return id;
     }
     const sessionVal = sessionStorage.getItem(ACTIVE_SHOP_KEY);
     if (sessionVal && sessionVal.trim()) {
@@ -1503,7 +1591,30 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const updateShopInfo = (newInfo: ShopInfo) => {
-    const updated = ensureShopInfoDefaults({ ...newInfo }, language);
+    let targetShopId = activeShopId || newInfo.id || generateShopId(newInfo.name || 'shop');
+    // If shop was on legacy Y.K. ID but user changed shop name to a different shop (e.g. Cafe),
+    // assign it a proper shop-specific ID without deleting any data.
+    if (
+      targetShopId === LEGACY_YK_SHOP_ID &&
+      newInfo.name &&
+      !isYkElectricalShopName(newInfo.name)
+    ) {
+      const properId = generateShopId(newInfo.name);
+      migrateShopScopeWithoutDeleting(targetShopId, properId, newInfo);
+      targetShopId = properId;
+      loadedShopRef.current = properId;
+      try {
+        if (localStorage.getItem(ACTIVE_SHOP_KEY)) {
+          localStorage.setItem(ACTIVE_SHOP_KEY, properId);
+        } else if (sessionStorage.getItem(ACTIVE_SHOP_KEY)) {
+          sessionStorage.setItem(ACTIVE_SHOP_KEY, properId);
+        }
+      } catch {
+        // ignore
+      }
+      setActiveShopId(properId);
+    }
+    const updated = ensureShopInfoDefaults({ ...newInfo, id: targetShopId }, language);
     setShopInfo(updated);
   };
 
