@@ -1,0 +1,6 @@
+{
+  "name": "Billing App",
+  "description": "Billing App - Simple Stock, Billing and Khata App for small shops. Manage stock, create bills in seconds, track udhar, daily sale and profit easily. Works fast on mobile, no complicated settings.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
