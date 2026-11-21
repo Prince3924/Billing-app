@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "Shop": {
+      "title": "Shop",
+      "description": "A shop profile and owner access record for multi-shop isolation.",
+      "type": "object",
+      "properties": {
+        "shopId": { "type": "string", "maxLength": 80 },
+        "ownerCode": { "type": "string", "maxLength": 90 },
+        "name": { "type": "string", "maxLength": 120 },
+        "ownerName": { "type": "string", "maxLength": 120 },
+        "mobile": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 300 },
+        "tagline": { "type": "string", "maxLength": 200 },
+        "gstin": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["shopId", "ownerCode", "name"]
+    },
+    "ShopRecord": {
+      "title": "ShopRecord",
+      "description": "A shop-scoped entity record (product, bill, order, dayClosing, supplierLedger, or staff entry).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 120 },
+        "shopId": { "type": "string", "maxLength": 80 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "shopId"]
+    },
+    "StaffDirectoryEntry": {
+      "title": "StaffDirectoryEntry",
+      "description": "Unique 10-digit mobile lookup entry linking a staff member to their shop and hashed PIN.",
+      "type": "object",
+      "properties": {
+        "staffId": { "type": "string", "maxLength": 120 },
+        "shopId": { "type": "string", "maxLength": 80 },
+        "mobile": { "type": "string", "pattern": "^[0-9]{10}$", "maxLength": 10 },
+        "name": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["MANAGER", "CASHIER"] },
+        "pinHash": { "type": "string", "maxLength": 128 },
+        "isActive": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["staffId", "shopId", "mobile", "name", "role", "pinHash", "isActive"]
+    }
+  },
+  "firestore": {
+    "/shops/{shopId}": {
+      "schema": { "$ref": "#/entities/Shop" },
+      "description": "Root shop metadata and ownerCode verification document."
+    },
+    "/shops/{shopId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/ShopRecord" },
+      "description": "Inventory products belonging to this shop."
+    },
+    "/shops/{shopId}/bills/{billId}": {
+      "schema": { "$ref": "#/entities/ShopRecord" },
+      "description": "Bills and customer khata records belonging to this shop."
+    },
+    "/shops/{shopId}/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/ShopRecord" },
+      "description": "Customer orders belonging to this shop."
+    },
+    "/shops/{shopId}/dayClosings/{closingId}": {
+      "schema": { "$ref": "#/entities/ShopRecord" },
+      "description": "Daily closing records belonging to this shop."
+    },
+    "/shops/{shopId}/supplierLedger/{supplierId}": {
+      "schema": { "$ref": "#/entities/ShopRecord" },
+      "description": "Supplier ledger accounts and transactions belonging to this shop."
+    },
+    "/shops/{shopId}/staff/{staffId}": {
+      "schema": { "$ref": "#/entities/ShopRecord" },
+      "description": "Staff accounts (Manager & Cashier) belonging to this shop."
+    },
+    "/staffDirectory/{mobile}": {
+      "schema": { "$ref": "#/entities/StaffDirectoryEntry" },
+      "description": "Global unique mobile lookup linking staff mobile to shopId without exposing Owner Code."
+    }
+  }
+}

@@ -22,8 +22,8 @@
 
   /* Form inputs mobile keyboard visibility clearance */
   input, textarea, select {
-    scroll-margin-top: 80px;
-    scroll-margin-bottom: 240px;
+    scroll-margin-top: 84px;
+    scroll-margin-bottom: 120px;
   }
 
   /* Bill paper guarantee: Always pure white with black text even in Dark Mode */
@@ -31,6 +31,36 @@
   #print-bill * {
     color-scheme: light !important;
   }
+}
+
+/* Mobile virtual keyboard layout & viewport adaptation */
+html.keyboard-input-focused body {
+  padding-bottom: var(--keyboard-scroll-pad, 0px);
+}
+
+/* Hide mobile bottom navigation & floating FAB while soft keyboard is open so they never cover focused inputs */
+html.keyboard-input-focused .keyboard-hide-on-focus {
+  display: none !important;
+}
+
+/* Keep fixed bottom checkout/action bars sitting cleanly ABOVE overlay keyboards */
+html.keyboard-open .keyboard-sticky-bottom {
+  bottom: var(--keyboard-inset, 0px) !important;
+  max-height: var(--vv-height, 100dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Constrain full-screen modal overlays to the live visible height above keyboard */
+html.keyboard-open .keyboard-modal-overlay {
+  top: var(--vv-offset-top, 0px) !important;
+  height: var(--vv-height, 100dvh) !important;
+  bottom: auto !important;
+}
+
+/* Extra bottom scroll space inside modal scroll containers while typing on mobile */
+html.keyboard-input-focused .keyboard-modal-body {
+  padding-bottom: 5.5rem !important;
 }
 
 @media print {

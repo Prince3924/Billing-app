@@ -137,6 +137,28 @@ app.patch('/api/shops/:shopId/orders/:orderId', (req, res) => {
   res.json({ success: true, order: target });
 });
 
+// 6. Owner API: Permanently delete a specific shop and its orders
+app.delete('/api/shops/:shopId', (req, res) => {
+  const cleanId = (req.params.shopId || '').trim().toLowerCase();
+  if (!cleanId) {
+    return res.status(400).json({ error: 'shopId is required' });
+  }
+
+  let deleted = false;
+  if (cleanId in shopsDb) {
+    delete shopsDb[cleanId];
+    writeJsonFile(SHOPS_FILE, shopsDb);
+    deleted = true;
+  }
+  if (cleanId in ordersDb) {
+    delete ordersDb[cleanId];
+    writeJsonFile(ORDERS_FILE, ordersDb);
+    deleted = true;
+  }
+
+  res.json({ success: true, shopId: cleanId, deleted });
+});
+
 // Serve frontend static files in production
 const distPath = path.join(process.cwd(), 'dist');
 if (fs.existsSync(distPath)) {

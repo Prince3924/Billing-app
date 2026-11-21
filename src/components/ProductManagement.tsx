@@ -16,7 +16,8 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
   onOpenAddProduct,
   onEditProduct,
 }) => {
-  const { products, deleteProduct, refillStock, t } = useShop();
+  const { products, deleteProduct, refillStock, activeStaff, t } = useShop();
+  const isStaff = Boolean(activeStaff);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCompany, setFilterCompany] = useState('ALL');
@@ -50,12 +51,12 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
         const matchesSearch =
           p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           p.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          p.vendor.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (!isStaff && p.vendor.toLowerCase().includes(searchTerm.toLowerCase())) ||
           p.barcode.includes(searchTerm) ||
           p.category.toLowerCase().includes(searchTerm.toLowerCase());
 
         const matchesCompany = filterCompany === 'ALL' || p.company === filterCompany;
-        const matchesVendor = filterVendor === 'ALL' || p.vendor === filterVendor;
+        const matchesVendor = isStaff || filterVendor === 'ALL' || p.vendor === filterVendor;
         const matchesCategory = filterCategory === 'ALL' || p.category === filterCategory;
         const matchesLowStock = !showLowStockOnly || p.stockQuantity <= p.lowStockLimit;
 
@@ -68,7 +69,7 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
         if (sortBy === 'priceDesc') return b.sellPrice - a.sellPrice;
         return 0;
       });
-  }, [products, searchTerm, filterCompany, filterVendor, filterCategory, showLowStockOnly, sortBy]);
+  }, [products, searchTerm, filterCompany, filterVendor, filterCategory, showLowStockOnly, sortBy, isStaff]);
 
   const handleRefillSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,7 +81,7 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
       return;
     }
 
-    const newPrice = refillCost ? parseFloat(refillCost) : undefined;
+    const newPrice = !isStaff && refillCost ? parseFloat(refillCost) : undefined;
     refillStock(refillTarget.id, qty, newPrice, refillNote);
     setRefillTarget(null);
     setRefillQty('10');
@@ -158,7 +159,7 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${isStaff ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-2.5`}>
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
               <Building2 className="h-3 w-3 text-amber-500" />
@@ -178,24 +179,26 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
             </select>
           </div>
 
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
-              <User className="h-3 w-3 text-blue-500" />
-              {t('filterByVendor')}
-            </label>
-            <select
-              value={filterVendor}
-              onChange={(e) => setFilterVendor(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:border-amber-500 outline-none"
-            >
-              <option value="ALL">{t('all')} ({vendors.length})</option>
-              {vendors.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!isStaff && (
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
+                <User className="h-3 w-3 text-blue-500" />
+                {t('filterByVendor')}
+              </label>
+              <select
+                value={filterVendor}
+                onChange={(e) => setFilterVendor(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:border-amber-500 outline-none"
+              >
+                <option value="ALL">{t('all')} ({vendors.length})</option>
+                {vendors.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
@@ -394,57 +397,78 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
                       <h3 className="font-extrabold text-slate-900 text-sm sm:text-base leading-snug">
                         {p.name}
                       </h3>
-                      <p className="text-xs text-slate-600 mt-1 flex items-center gap-1">
-                        <User className="h-3 w-3 text-blue-500 shrink-0" />
-                        <span className="truncate">{t('supplierLabel')}: {p.vendor || t('localVendorLabel')}</span>
-                      </p>
+                      {!isStaff && (
+                        <p className="text-xs text-slate-600 mt-1 flex items-center gap-1">
+                          <User className="h-3 w-3 text-blue-500 shrink-0" />
+                          <span className="truncate">{t('supplierLabel')}: {p.vendor || t('localVendorLabel')}</span>
+                        </p>
+                      )}
                       <p className="text-[11px] font-mono text-slate-500 mt-0.5">
                         {t('barcodeLabel')}: {p.barcode}
                       </p>
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-2.5 border border-slate-200 text-center">
-                    <div>
-                      <span className="text-[10px] text-slate-500 font-bold block uppercase">{t('purchasePriceTag')}</span>
-                      <span className="text-xs sm:text-sm font-black text-slate-900 font-mono">
-                        ₹{p.purchasePrice}
-                      </span>
-                    </div>
-
-                    <div className="border-x border-slate-200">
-                      <span className="text-[10px] text-emerald-700 font-bold block uppercase">{t('sellPriceTag')}</span>
-                      <span className="text-xs sm:text-sm font-black text-emerald-700 font-mono">
-                        ₹{p.sellPrice}
-                      </span>
-                      {typeof p.mrp === 'number' && p.mrp > 0 && (
-                        <span className="block text-[10px] text-slate-500 font-semibold font-mono mt-0.5">
-                          {t('mrpTag')}: ₹{p.mrp}
+                  {isStaff ? (
+                    <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-200 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-emerald-700 font-bold block uppercase">{t('sellPriceTag')}</span>
+                        <span className="text-sm font-black text-emerald-700 font-mono">
+                          ₹{p.sellPrice}
                         </span>
-                      )}
-                    </div>
-
-                    {(() => {
-                      const rawMargin = Math.round(((p.sellPrice || 0) - (p.purchasePrice || 0)) * 100) / 100;
-                      const margin = Math.abs(rawMargin) < 0.005 ? 0 : rawMargin;
-                      const formattedMargin = Math.abs(margin).toFixed(2).replace(/\.00$/, '');
-                      const colorClass =
-                        margin > 0
-                          ? 'text-emerald-700'
-                          : margin < 0
-                          ? 'text-red-600'
-                          : 'text-slate-500';
-                      const signPrefix = margin > 0 ? '+' : margin < 0 ? '-' : '';
-                      return (
-                        <div>
-                          <span className={`text-[10px] ${colorClass} font-bold block uppercase`}>{t('margin')}</span>
-                          <span className={`text-xs sm:text-sm font-black ${colorClass} font-mono`}>
-                            {signPrefix}₹{formattedMargin}
+                      </div>
+                      {typeof p.mrp === 'number' && p.mrp > 0 && (
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-500 font-bold block uppercase">{t('mrpTag')}</span>
+                          <span className="text-xs font-semibold text-slate-600 font-mono">
+                            ₹{p.mrp}
                           </span>
                         </div>
-                      );
-                    })()}
-                  </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-2.5 border border-slate-200 text-center">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-bold block uppercase">{t('purchasePriceTag')}</span>
+                        <span className="text-xs sm:text-sm font-black text-slate-900 font-mono">
+                          ₹{p.purchasePrice}
+                        </span>
+                      </div>
+
+                      <div className="border-x border-slate-200">
+                        <span className="text-[10px] text-emerald-700 font-bold block uppercase">{t('sellPriceTag')}</span>
+                        <span className="text-xs sm:text-sm font-black text-emerald-700 font-mono">
+                          ₹{p.sellPrice}
+                        </span>
+                        {typeof p.mrp === 'number' && p.mrp > 0 && (
+                          <span className="block text-[10px] text-slate-500 font-semibold font-mono mt-0.5">
+                            {t('mrpTag')}: ₹{p.mrp}
+                          </span>
+                        )}
+                      </div>
+
+                      {(() => {
+                        const rawMargin = Math.round(((p.sellPrice || 0) - (p.purchasePrice || 0)) * 100) / 100;
+                        const margin = Math.abs(rawMargin) < 0.005 ? 0 : rawMargin;
+                        const formattedMargin = Math.abs(margin).toFixed(2).replace(/\.00$/, '');
+                        const colorClass =
+                          margin > 0
+                            ? 'text-emerald-700'
+                            : margin < 0
+                            ? 'text-red-600'
+                            : 'text-slate-500';
+                        const signPrefix = margin > 0 ? '+' : margin < 0 ? '-' : '';
+                        return (
+                          <div>
+                            <span className={`text-[10px] ${colorClass} font-bold block uppercase`}>{t('margin')}</span>
+                            <span className={`text-xs sm:text-sm font-black ${colorClass} font-mono`}>
+                              {signPrefix}₹{formattedMargin}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
@@ -452,7 +476,7 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
                     onClick={() => {
                       setRefillTarget(p);
                       setRefillQty('10');
-                      setRefillCost(p.purchasePrice.toString());
+                      setRefillCost(isStaff ? '' : p.purchasePrice.toString());
                     }}
                     className="flex-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs py-2 px-3 flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
                   >
@@ -468,13 +492,15 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
                     <Edit className="h-4 w-4" />
                   </button>
 
-                  <button
-                    onClick={() => handleDelete(p)}
-                    className="rounded-xl bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 p-2 transition cursor-pointer"
-                    title={t('delete')}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {!isStaff && (
+                    <button
+                      onClick={() => handleDelete(p)}
+                      className="rounded-xl bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 p-2 transition cursor-pointer"
+                      title={t('delete')}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -484,8 +510,8 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
 
       {/* QUICK REFILL MODAL */}
       {refillTarget && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-3 backdrop-blur-xs overflow-y-auto overscroll-contain">
-          <div className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 my-4 sm:my-auto">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-3 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-black">
@@ -512,7 +538,7 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
               </p>
             </div>
 
-            <form onSubmit={handleRefillSubmit} className="mt-4 space-y-3">
+            <form onSubmit={handleRefillSubmit} className="mt-4 space-y-3 keyboard-modal-body">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
                   {t('refillQtyLabel')} <span className="text-red-500">*</span>
@@ -542,22 +568,24 @@ export const ProductManagement: React.FC<ProductManagementProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                  {t('refillCostLabel')}
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2 text-slate-500 font-bold">₹</span>
-                  <input
-                    type="number"
-                    step="any"
-                    placeholder={`${t('rate')} ₹${refillTarget.purchasePrice}`}
-                    value={refillCost}
-                    onChange={(e) => setRefillCost(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 bg-white pl-7 pr-3 py-2 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:border-amber-500 outline-none"
-                  />
+              {!isStaff && (
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    {t('refillCostLabel')}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-slate-500 font-bold">₹</span>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder={`${t('rate')} ₹${refillTarget.purchasePrice}`}
+                      value={refillCost}
+                      onChange={(e) => setRefillCost(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white pl-7 pr-3 py-2 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:border-amber-500 outline-none"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">

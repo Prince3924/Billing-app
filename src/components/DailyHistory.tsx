@@ -26,12 +26,15 @@ export const DailyHistory: React.FC = () => {
     openBillEditorFromEstimate,
     openBillEditorForEdit,
     shopInfo,
+    activeStaff,
     language,
     t,
   } = useShop();
 
+  const isStaff = Boolean(activeStaff);
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const effectiveDate = isStaff ? todayStr : selectedDate;
   const [filterMode, setFilterMode] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [alertToast, setAlertToast] = useState<string | null>(null);
@@ -50,11 +53,12 @@ export const DailyHistory: React.FC = () => {
     return bills.filter((b) => {
       if (filterMode === 'Estimates') {
         if (!b.isEstimate) return false;
+        if (isStaff && !b.date.startsWith(todayStr)) return false;
       } else {
         if (b.isEstimate) return false;
-        // When searching by serial number / customer / bill no, allow finding across all dates for warranty checks
-        if (!trimmedSearch) {
-          const matchDate = b.date.startsWith(selectedDate);
+        // Staff/Manager can only view today's bills; Owners can search across all dates for warranty checks
+        if (isStaff || !trimmedSearch) {
+          const matchDate = b.date.startsWith(effectiveDate);
           if (!matchDate) return false;
         }
         const matchMode = filterMode === 'ALL' || b.paymentMode === filterMode;
@@ -71,7 +75,7 @@ export const DailyHistory: React.FC = () => {
 
       return matchSearch;
     });
-  }, [bills, selectedDate, filterMode, trimmedSearch]);
+  }, [bills, effectiveDate, filterMode, trimmedSearch, isStaff, todayStr]);
 
   const tomorrowReminderBills = useMemo(() => {
     return bills.filter(
@@ -203,37 +207,39 @@ export const DailyHistory: React.FC = () => {
           <p className="text-xs text-slate-400">{t('dailyHistorySub')}</p>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-2xl border border-slate-700">
-          <button
-            type="button"
-            onClick={handlePrevDay}
-            className="rounded-xl p-2 text-slate-300 hover:bg-slate-700 hover:text-white transition cursor-pointer"
-            title={t('previousDayTitle')}
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
+        {!isStaff && (
+          <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-2xl border border-slate-700">
+            <button
+              type="button"
+              onClick={handlePrevDay}
+              className="rounded-xl p-2 text-slate-300 hover:bg-slate-700 hover:text-white transition cursor-pointer"
+              title={t('previousDayTitle')}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
 
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-bold text-amber-300 outline-none border border-slate-700 focus:border-amber-400 cursor-pointer"
-          />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-bold text-amber-300 outline-none border border-slate-700 focus:border-amber-400 cursor-pointer"
+            />
 
-          <button
-            type="button"
-            onClick={handleNextDay}
-            disabled={selectedDate >= todayStr}
-            className="rounded-xl p-2 text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-30 transition cursor-pointer"
-            title={t('nextDayTitle')}
-          >
-            <ChevronRight className="h-5 w-5" />
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={handleNextDay}
+              disabled={selectedDate >= todayStr}
+              className="rounded-xl p-2 text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-30 transition cursor-pointer"
+              title={t('nextDayTitle')}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Scheduled Reminders Banner */}
-      {tomorrowReminderBills.length > 0 && (
+      {!isStaff && tomorrowReminderBills.length > 0 && (
         <div className="rounded-2xl bg-amber-50 border-2 border-amber-300 p-4 shadow-sm space-y-3 text-slate-900">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -306,8 +312,8 @@ export const DailyHistory: React.FC = () => {
               {t('selectDateLabel')}
             </span>
             <h2 className="text-base sm:text-lg font-black text-slate-900 capitalize">
-              {formatDisplayDate(selectedDate)}
-              {selectedDate === todayStr && (
+              {formatDisplayDate(effectiveDate)}
+              {effectiveDate === todayStr && (
                 <span className="ml-2 text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
                   {t('todayParenTag')}
                 </span>
@@ -315,16 +321,18 @@ export const DailyHistory: React.FC = () => {
             </h2>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setSelectedDate(todayStr)}
-            className="rounded-xl bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 px-3 py-1.5 text-xs font-bold transition cursor-pointer"
-          >
-            {t('todayBtn')}
-          </button>
+          {!isStaff && (
+            <button
+              type="button"
+              onClick={() => setSelectedDate(todayStr)}
+              className="rounded-xl bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 px-3 py-1.5 text-xs font-bold transition cursor-pointer"
+            >
+              {t('todayBtn')}
+            </button>
+          )}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+        <div className={`grid grid-cols-2 ${isStaff ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-3 mt-4`}>
           <div className="rounded-xl bg-emerald-50 p-3 border border-emerald-200">
             <span className="text-[10px] font-bold text-emerald-800 uppercase block">
               {t('daySalesTotal')}
@@ -337,19 +345,21 @@ export const DailyHistory: React.FC = () => {
             </p>
           </div>
 
-          <div className="rounded-xl bg-amber-50 p-3 border border-amber-200">
-            <span className="text-[10px] font-bold text-amber-800 uppercase block">
-              {t('dayProfitTotal')}
-            </span>
-            <span className="text-xl sm:text-2xl font-black text-amber-950 font-mono">
-              ₹{dateStats.totalProfit.toLocaleString('en-IN')}
-            </span>
-            <p className="text-[11px] text-amber-700 mt-0.5">
-              {dateStats.totalSale > 0
-                ? `${((dateStats.totalProfit / dateStats.totalSale) * 100).toFixed(0)}${t('marginPctSuffix')}`
-                : t('margin')}
-            </p>
-          </div>
+          {!isStaff && (
+            <div className="rounded-xl bg-amber-50 p-3 border border-amber-200">
+              <span className="text-[10px] font-bold text-amber-800 uppercase block">
+                {t('dayProfitTotal')}
+              </span>
+              <span className="text-xl sm:text-2xl font-black text-amber-950 font-mono">
+                ₹{dateStats.totalProfit.toLocaleString('en-IN')}
+              </span>
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                {dateStats.totalSale > 0
+                  ? `${((dateStats.totalProfit / dateStats.totalSale) * 100).toFixed(0)}${t('marginPctSuffix')}`
+                  : t('margin')}
+              </p>
+            </div>
+          )}
 
           <div className="rounded-xl bg-blue-50 p-3 border border-blue-200">
             <span className="text-[10px] font-bold text-blue-800 uppercase block">
@@ -429,7 +439,7 @@ export const DailyHistory: React.FC = () => {
               {filterMode === 'Estimates' ? t('noEstimatesTitle') : t('noBillsOnDate')}
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              {filterMode === 'Estimates' ? t('noEstimatesSub') : selectedDate}
+              {filterMode === 'Estimates' ? t('noEstimatesSub') : effectiveDate}
             </p>
           </div>
         ) : (
@@ -528,15 +538,17 @@ export const DailyHistory: React.FC = () => {
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => openBillEditorForEdit(bill)}
-                      className="flex items-center gap-1 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-800 transition cursor-pointer"
-                      title={t('edit')}
-                    >
-                      <Edit className="h-3.5 w-3.5" />
-                      <span>{t('edit')}</span>
-                    </button>
+                    {!isStaff && (
+                      <button
+                        type="button"
+                        onClick={() => openBillEditorForEdit(bill)}
+                        className="flex items-center gap-1 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-800 transition cursor-pointer"
+                        title={t('edit')}
+                      >
+                        <Edit className="h-3.5 w-3.5" />
+                        <span>{t('edit')}</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -550,14 +562,16 @@ export const DailyHistory: React.FC = () => {
                       <span>{t('viewBillReceipt')}</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleCancelBill(bill)}
-                      className="rounded-xl p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
-                      title={t('cancelBillBtn')}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {!isStaff && (
+                      <button
+                        type="button"
+                        onClick={() => handleCancelBill(bill)}
+                        className="rounded-xl p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
+                        title={t('cancelBillBtn')}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -571,6 +585,13 @@ export const DailyHistory: React.FC = () => {
                         <span className="ml-2 font-mono text-slate-500">({bill.customerMobile})</span>
                       )}
                     </div>
+                    {bill.billByLabel && (
+                      <div className="mt-1">
+                        <span className="inline-block rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-[11px] font-bold text-blue-800">
+                          {bill.billByLabel}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-1 text-xs text-slate-500">
                       <span className="font-semibold text-slate-700">
                         {bill.items.length} {t('itemsUnit')}:
@@ -589,9 +610,11 @@ export const DailyHistory: React.FC = () => {
                     <div className="text-lg font-black text-slate-900 font-mono">
                       ₹{bill.grandTotal}
                     </div>
-                    <div className="text-xs text-emerald-700 font-bold">
-                      +₹{bill.totalProfit} {t('profitBadge')}
-                    </div>
+                    {!isStaff && (
+                      <div className="text-xs text-emerald-700 font-bold">
+                        +₹{bill.totalProfit} {t('profitBadge')}
+                      </div>
+                    )}
                   </div>
                 </div>
 

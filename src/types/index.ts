@@ -8,6 +8,29 @@ export interface LogoDesign {
 
 export type PaymentMode = 'Cash' | 'UPI' | 'Udhar';
 
+export type StaffRole = 'MANAGER' | 'CASHIER';
+
+export interface StaffMember {
+  id: string;
+  shopId: string;
+  name: string;
+  mobile: string;
+  role: StaffRole;
+  pinHash: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ActiveStaffSession {
+  staffId: string;
+  shopId: string;
+  name: string;
+  mobile: string;
+  role: StaffRole;
+  loggedInAt: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -62,6 +85,11 @@ export interface Bill {
   convertedToBillId?: string;
   convertedFromEstimateId?: string;
   sourceOrderId?: string;
+  createdByStaffId?: string;
+  createdByName?: string;
+  createdByRole?: StaffRole | 'OWNER';
+  createdByMobile?: string;
+  billByLabel?: string;
 }
 
 export interface StockRefill {
@@ -221,6 +249,7 @@ export type ActiveTab =
   | 'history' 
   | 'profit-report'
   | 'supplier-khata'
-  | 'rate-list-qr';
+  | 'rate-list-qr'
+  | 'staff-accounts';
 
 export type Language = 'hinglish' | 'hindi' | 'english';

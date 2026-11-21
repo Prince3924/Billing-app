@@ -16,13 +16,18 @@ import { AddProductModal } from './components/AddProductModal';
 import { ShopSettingsModal } from './components/ShopSettingsModal';
 import { OnboardingGuideModal } from './components/OnboardingGuideModal';
 import { DayClosingModal } from './components/DayClosingModal';
+import { StaffAccountsScreen } from './components/StaffAccountsScreen';
 import { Product } from './types';
 import { Zap, Store } from 'lucide-react';
 import { useMobileKeyboardManager } from './hooks/useMobileKeyboardManager';
 
 const MainLayout: React.FC = () => {
   useMobileKeyboardManager();
-  const { activeTab, setActiveTab, shopInfo, activeShopId, t } = useShop();
+  const { activeTab, setActiveTab, shopInfo, activeShopId, activeStaff, t } = useShop();
+
+  const isStaff = Boolean(activeStaff);
+  const isCashier = activeStaff?.role === 'CASHIER';
+  const isManager = activeStaff?.role === 'MANAGER';
 
   const detectRoute = () => {
     if (typeof window === 'undefined') return 'owner' as const;
@@ -69,6 +74,19 @@ const MainLayout: React.FC = () => {
     };
   }, []);
 
+  // Enforce allowed tab per Staff role
+  useEffect(() => {
+    if (!activeShopId || !activeStaff) return;
+    if (activeStaff.role === 'CASHIER' && activeTab !== 'billing') {
+      setActiveTab('billing');
+    } else if (
+      activeStaff.role === 'MANAGER' &&
+      !['dashboard', 'billing', 'products', 'history'].includes(activeTab)
+    ) {
+      setActiveTab('dashboard');
+    }
+  }, [activeShopId, activeStaff, activeTab, setActiveTab]);
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -84,11 +102,13 @@ const MainLayout: React.FC = () => {
   });
 
   const handleOpenAddProduct = () => {
+    if (isCashier) return;
     setEditingProduct(null);
     setIsAddModalOpen(true);
   };
 
   const handleEditProduct = (product: Product) => {
+    if (isCashier) return;
     setEditingProduct(product);
     setIsAddModalOpen(true);
   };
@@ -103,78 +123,92 @@ const MainLayout: React.FC = () => {
     return <AdminCreateShopPage />;
   }
 
-  // 3. Base link or #/owner: if not logged in with Owner Code, show ONLY Owner Code Login Page
+  // 3. Base link or #/owner: if not logged in, show Owner / Staff Login Page
   if (!activeShopId) {
     return <OwnerCodeLoginPage />;
   }
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans pb-20 md:pb-8 overflow-x-hidden w-full transition-colors duration-150">
-      {/* Navbar with brand & 5-item mobile navigation */}
+      {/* Navbar with brand & role-based navigation */}
       <Navbar
-        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenSettings={() => {
+          if (!isStaff) setIsSettingsOpen(true);
+        }}
         onOpenAddProduct={handleOpenAddProduct}
-        onOpenDayClosing={() => setIsDayClosingOpen(true)}
+        onOpenDayClosing={
+          !isStaff ? () => setIsDayClosingOpen(true) : undefined
+        }
       />
 
       {/* Main App Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 lg:p-6">
-        {activeTab === 'dashboard' && (
+        {activeTab === 'dashboard' && !isCashier && (
           <Dashboard onOpenAddProduct={handleOpenAddProduct} />
         )}
 
-        {activeTab === 'billing' && <BillingScreen />}
+        {(activeTab === 'billing' || isCashier) && <BillingScreen />}
 
-        {activeTab === 'products' && (
+        {activeTab === 'products' && !isCashier && (
           <ProductManagement
             onOpenAddProduct={handleOpenAddProduct}
             onEditProduct={handleEditProduct}
           />
         )}
 
-        {activeTab === 'low-stock' && <LowStockScreen />}
+        {activeTab === 'low-stock' && !isStaff && <LowStockScreen />}
 
-        {activeTab === 'history' && <DailyHistory />}
+        {activeTab === 'history' && !isCashier && <DailyHistory />}
 
-        {activeTab === 'profit-report' && <ProfitReport />}
+        {activeTab === 'profit-report' && !isStaff && <ProfitReport />}
 
-        {activeTab === 'supplier-khata' && <SupplierKhataScreen />}
+        {activeTab === 'supplier-khata' && !isStaff && <SupplierKhataScreen />}
 
-        {activeTab === 'rate-list-qr' && <RateListQrScreen />}
+        {activeTab === 'rate-list-qr' && !isStaff && <RateListQrScreen />}
+
+        {activeTab === 'staff-accounts' && <StaffAccountsScreen />}
       </main>
 
-      {/* Add Product / Edit Product Modal */}
-      <AddProductModal
-        isOpen={isAddModalOpen}
-        onClose={() => {
-          setIsAddModalOpen(false);
-          setEditingProduct(null);
-        }}
-        editingProduct={editingProduct}
-      />
+      {/* Add Product / Edit Product Modal (Owner & Manager only) */}
+      {!isCashier && (
+        <AddProductModal
+          isOpen={isAddModalOpen}
+          onClose={() => {
+            setIsAddModalOpen(false);
+            setEditingProduct(null);
+          }}
+          editingProduct={editingProduct}
+        />
+      )}
 
-      {/* Shop Settings & Backup Modal */}
-      <ShopSettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        onOpenGuide={() => setIsOnboardingOpen(true)}
-      />
+      {/* Shop Settings & Backup Modal (Owner ONLY) */}
+      {!isStaff && (
+        <ShopSettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          onOpenGuide={() => setIsOnboardingOpen(true)}
+        />
+      )}
 
-      {/* Day Closing Modal (Accessible globally from More Menu & Dashboard) */}
-      <DayClosingModal
-        isOpen={isDayClosingOpen}
-        onClose={() => setIsDayClosingOpen(false)}
-      />
+      {/* Day Closing Modal (Owner ONLY) */}
+      {!isStaff && (
+        <DayClosingModal
+          isOpen={isDayClosingOpen}
+          onClose={() => setIsDayClosingOpen(false)}
+        />
+      )}
 
-      {/* Step-by-Step Onboarding Guide */}
-      <OnboardingGuideModal
-        isOpen={isOnboardingOpen}
-        onClose={() => setIsOnboardingOpen(false)}
-      />
+      {/* Step-by-Step Onboarding Guide (Owner ONLY) */}
+      {!isStaff && (
+        <OnboardingGuideModal
+          isOpen={isOnboardingOpen}
+          onClose={() => setIsOnboardingOpen(false)}
+        />
+      )}
 
       {/* Mobile Floating Action Button */}
-      {activeTab !== 'billing' && (
-        <div className="md:hidden fixed bottom-18 right-4 z-30">
+      {activeTab !== 'billing' && !isCashier && (
+        <div className="md:hidden keyboard-hide-on-focus fixed bottom-18 right-4 z-30">
           <button
             onClick={() => setActiveTab('billing')}
             className="flex items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 px-4 py-3 font-black text-xs shadow-xl ring-2 ring-white active:scale-95 transition"
@@ -199,7 +233,7 @@ const MainLayout: React.FC = () => {
             {shopInfo.address ? `${shopInfo.address} ` : ''}{shopInfo.mobile ? `• 📞 ${shopInfo.mobile}` : ''}
           </div>
           <div className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
-            {shopInfo.name || t('appName')}
+            {isManager ? 'Manager Mode' : isCashier ? 'Cashier Mode' : shopInfo.name || t('appName')}
           </div>
         </div>
       </footer>

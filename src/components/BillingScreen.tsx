@@ -28,8 +28,10 @@ export const BillingScreen: React.FC = () => {
     shopInfo,
     billingDraft,
     clearBillingDraft,
+    activeStaff,
     t,
   } = useShop();
+  const isCashier = activeStaff?.role === 'CASHIER';
 
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -230,7 +232,7 @@ export const BillingScreen: React.FC = () => {
     setQtyStrings((prev) => ({ ...prev, [newItem.productId]: String(newItem.quantity) }));
     setRateStrings((prev) => ({ ...prev, [newItem.productId]: String(newItem.sellPrice) }));
 
-    if (saveToProductList) {
+    if (saveToProductList && !isCashier) {
       addProduct({
         name: customItemName.trim(),
         barcode: '890' + Math.floor(1000000000 + Math.random() * 9000000000),
@@ -783,7 +785,7 @@ export const BillingScreen: React.FC = () => {
 
         {/* RIGHT COLUMN: The Live Bill / Cart */}
         <div className="lg:col-span-5">
-          <div className="rounded-2xl bg-white shadow-lg border-2 border-amber-400 overflow-hidden sticky top-4">
+          <div className="rounded-2xl bg-white shadow-lg border-2 border-amber-400 overflow-hidden lg:sticky lg:top-4">
             {/* Bill Header */}
             <div className="bg-linear-to-r from-amber-500 to-amber-600 p-3.5 text-slate-950 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1098,8 +1100,8 @@ export const BillingScreen: React.FC = () => {
 
       {/* Custom Item / Weight Item Modal */}
       {isCustomModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl border border-slate-200">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-md my-auto rounded-2xl bg-white p-5 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-extrabold text-slate-900 text-base">
                 ⚖️ {t('customItemTitle')}
@@ -1112,7 +1114,7 @@ export const BillingScreen: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleAddCustomItem} className="mt-4 space-y-3">
+            <form onSubmit={handleAddCustomItem} className="mt-4 space-y-3 keyboard-modal-body">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
                   {t('customItemName')} <span className="text-red-500">*</span>
@@ -1189,15 +1191,17 @@ export const BillingScreen: React.FC = () => {
                 </div>
               )}
 
-              <label className="flex items-center gap-2 pt-1 text-xs font-semibold text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={saveToProductList}
-                  onChange={(e) => setSaveToProductList(e.target.checked)}
-                  className="rounded border-slate-300 text-amber-500 focus:ring-amber-400 h-4 w-4"
-                />
-                <span>{t('saveToProductListOptional')}</span>
-              </label>
+              {!isCashier && (
+                <label className="flex items-center gap-2 pt-1 text-xs font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={saveToProductList}
+                    onChange={(e) => setSaveToProductList(e.target.checked)}
+                    className="rounded border-slate-300 text-amber-500 focus:ring-amber-400 h-4 w-4"
+                  />
+                  <span>{t('saveToProductListOptional')}</span>
+                </label>
+              )}
 
               <div className="pt-3 border-t border-slate-100 flex gap-2">
                 <button
@@ -1221,8 +1225,8 @@ export const BillingScreen: React.FC = () => {
 
       {/* Expired Product Warning Dialog */}
       {expiredWarningProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border-2 border-red-500 animate-in zoom-in-95">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-sm my-auto rounded-2xl bg-white p-5 shadow-2xl border-2 border-red-500 animate-in zoom-in-95">
             <div className="text-center">
               <span className="text-3xl">⚠️</span>
               <h3 className="font-black text-red-600 text-base mt-2">

@@ -34,7 +34,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   editingProduct,
   onSuccess,
 }) => {
-  const { addProduct, updateProduct, products, t } = useShop();
+  const { addProduct, updateProduct, products, activeStaff, t } = useShop();
+  const isStaff = Boolean(activeStaff);
 
   const [mode, setMode] = useState<'manual' | 'scan'>('manual');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -169,10 +170,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       return;
     }
 
-    const pPrice = parseFloat(purchasePrice);
+    const pPrice = isStaff
+      ? (editingProduct ? editingProduct.purchasePrice : 0)
+      : parseFloat(purchasePrice);
     const sPrice = parseFloat(sellPrice);
 
-    if (isNaN(pPrice) || pPrice < 0) {
+    if (!isStaff && (isNaN(pPrice) || pPrice < 0)) {
       setError(t('requiredFieldError', { field: t('purchasePriceLabel') }));
       return;
     }
@@ -183,7 +186,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     }
 
     const finalCompany = company === 'OTHER' ? customCompany.trim() : company.trim();
-    const finalVendor = vendor === 'OTHER' ? customVendor.trim() : vendor.trim();
+    const finalVendor = isStaff
+      ? (editingProduct ? editingProduct.vendor : '')
+      : vendor === 'OTHER'
+      ? customVendor.trim()
+      : vendor.trim();
     const finalCategory = category === 'OTHER' ? customCategory.trim() : category.trim();
     const finalBarcode = barcode.trim() || '890' + Math.floor(1000000000 + Math.random() * 9000000000);
 
@@ -238,8 +245,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 flex items-start sm:items-center justify-center bg-black/70 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
-        <div className="relative w-full max-w-xl rounded-2xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-3 sm:my-6">
+      <div className="keyboard-modal-overlay fixed inset-0 z-40 flex items-start sm:items-center justify-center bg-black/70 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+        <div className="relative w-full max-w-xl rounded-2xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-auto">
           {/* Header */}
           <div className="border-b border-slate-100 bg-linear-to-r from-amber-500 to-amber-600 px-5 py-3.5 text-slate-900 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -298,7 +305,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 max-h-[78vh] sm:max-h-[75vh] overflow-y-auto overscroll-contain pb-32 sm:pb-5 bg-white text-slate-900">
+          <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 max-h-[calc(var(--vv-height,100dvh)-8.5rem)] sm:max-h-[75vh] overflow-y-auto overscroll-contain pb-24 sm:pb-5 keyboard-modal-body bg-white text-slate-900">
             {error && (
               <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-red-700 text-xs font-semibold flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
@@ -350,7 +357,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={`grid grid-cols-1 ${isStaff ? '' : 'sm:grid-cols-2'} gap-3`}>
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
                   <Building2 className="h-3.5 w-3.5 text-amber-500" />
@@ -382,36 +389,38 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 )}
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
-                  <User className="h-3.5 w-3.5 text-blue-500" />
-                  {t('vendorLabel')}
-                </label>
-                <select
-                  value={vendor}
-                  onChange={(e) => setVendor(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 font-bold focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
-                >
-                  <option value="">{t('selectSupplierPlaceholder')}</option>
-                  {availableVendors.map((v) => (
-                    <option key={v} value={v}>{v}</option>
-                  ))}
-                  {vendor && vendor !== 'OTHER' && !availableVendors.includes(vendor) && (
-                    <option value={vendor}>{vendor}</option>
+              {!isStaff && (
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
+                    <User className="h-3.5 w-3.5 text-blue-500" />
+                    {t('vendorLabel')}
+                  </label>
+                  <select
+                    value={vendor}
+                    onChange={(e) => setVendor(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 font-bold focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
+                  >
+                    <option value="">{t('selectSupplierPlaceholder')}</option>
+                    {availableVendors.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                    {vendor && vendor !== 'OTHER' && !availableVendors.includes(vendor) && (
+                      <option value={vendor}>{vendor}</option>
+                    )}
+                    <option value="OTHER">{t('otherSupplierOption')}</option>
+                  </select>
+                  {vendor === 'OTHER' && (
+                    <input
+                      type="text"
+                      placeholder={t('enterSupplierPlaceholder')}
+                      value={customVendor}
+                      onChange={(e) => setCustomVendor(e.target.value)}
+                      className="mt-1.5 w-full rounded-xl border border-blue-400 bg-white px-3 py-2 text-xs font-extrabold text-black placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
+                      autoFocus
+                    />
                   )}
-                  <option value="OTHER">{t('otherSupplierOption')}</option>
-                </select>
-                {vendor === 'OTHER' && (
-                  <input
-                    type="text"
-                    placeholder={t('enterSupplierPlaceholder')}
-                    value={customVendor}
-                    onChange={(e) => setCustomVendor(e.target.value)}
-                    className="mt-1.5 w-full rounded-xl border border-blue-400 bg-white px-3 py-2 text-xs font-extrabold text-black placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
-                    autoFocus
-                  />
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -470,24 +479,26 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
             {/* Pricing */}
             <div className="rounded-xl bg-amber-50/70 border border-amber-200 p-3.5">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    {t('purchasePriceLabel')} <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-slate-400 font-bold">₹</span>
-                    <input
-                      type="number"
-                      step="any"
-                      required
-                      placeholder="0.00"
-                      value={purchasePrice}
-                      onChange={(e) => setPurchasePrice(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 bg-white pl-7 pr-3 py-2 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none"
-                    />
+              <div className={`grid ${isStaff ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
+                {!isStaff && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      {t('purchasePriceLabel')} <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-slate-400 font-bold">₹</span>
+                      <input
+                        type="number"
+                        step="any"
+                        required
+                        placeholder="0.00"
+                        value={purchasePrice}
+                        onChange={(e) => setPurchasePrice(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white pl-7 pr-3 py-2 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
@@ -536,7 +547,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   )}
               </div>
 
-              {parseFloat(purchasePrice) > 0 && parseFloat(sellPrice) > 0 && (
+              {!isStaff && parseFloat(purchasePrice) > 0 && parseFloat(sellPrice) > 0 && (
                 <div className="mt-2.5 pt-2 border-t border-amber-200 flex items-center justify-between text-xs font-bold text-slate-700">
                   <span>{t('profitPerItemPreview')}</span>
                   <span className={`px-2 py-0.5 rounded-md ${parseFloat(sellPrice) >= parseFloat(purchasePrice) ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>

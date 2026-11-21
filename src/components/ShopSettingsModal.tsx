@@ -24,6 +24,8 @@ import {
   Camera,
   Sparkles,
   Send,
+  LogOut,
+  Copy,
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import {
@@ -59,6 +61,8 @@ export const ShopSettingsModal: React.FC<ShopSettingsModalProps> = ({
   onOpenGuide,
 }) => {
   const {
+    activeShopId,
+    logoutOwner,
     shopInfo,
     updateShopInfo,
     exportBackup,
@@ -69,6 +73,8 @@ export const ShopSettingsModal: React.FC<ShopSettingsModalProps> = ({
     darkMode,
     setDarkMode,
   } = useShop();
+
+  const [copiedOwnerCode, setCopiedOwnerCode] = useState(false);
 
   const [name, setName] = useState(shopInfo.name);
   const [address, setAddress] = useState(shopInfo.address);
@@ -426,8 +432,8 @@ export const ShopSettingsModal: React.FC<ShopSettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/75 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
-      <div className="relative w-full max-w-lg rounded-2xl bg-slate-100 dark:bg-slate-950 shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-3 sm:my-6">
+    <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/75 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+      <div className="relative w-full max-w-lg rounded-2xl bg-slate-100 dark:bg-slate-950 shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-auto">
         {/* Modal Header */}
         <div className="border-b border-slate-800 bg-slate-900 px-5 py-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -451,7 +457,7 @@ export const ShopSettingsModal: React.FC<ShopSettingsModalProps> = ({
         {/* Scrollable Content Form */}
         <form
           onSubmit={handleSave}
-          className="p-4 sm:p-5 space-y-4 max-h-[80vh] sm:max-h-[78vh] overflow-y-auto overscroll-contain pb-32 sm:pb-5"
+          className="p-4 sm:p-5 space-y-4 max-h-[calc(var(--vv-height,100dvh)-6rem)] sm:max-h-[78vh] overflow-y-auto overscroll-contain pb-24 sm:pb-5 keyboard-modal-body"
         >
           {savedSuccess && (
             <div className="rounded-xl bg-emerald-600 px-4 py-2.5 text-white text-xs font-bold flex items-center gap-2">
@@ -512,6 +518,44 @@ export const ShopSettingsModal: React.FC<ShopSettingsModalProps> = ({
                 {t('mobile')}: {shopInfo.mobile || '—'}
               </span>
             </div>
+
+            {activeShopId && shopInfo.id && (
+              <div className="mt-3 pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Owner Code (For 2nd Mobile Login)
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-xs font-mono font-black text-amber-400 truncate">
+                      {activeShopId}-955
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(`${activeShopId}-955`).catch(() => {});
+                        setCopiedOwnerCode(true);
+                        setTimeout(() => setCopiedOwnerCode(false), 1800);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg bg-slate-800 hover:bg-slate-700 px-2 py-0.5 text-[10px] font-bold text-slate-200 cursor-pointer"
+                    >
+                      {copiedOwnerCode ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                      <span>{copiedOwnerCode ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    logoutOwner();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 px-3 py-1.5 text-xs font-black text-rose-300 transition cursor-pointer shrink-0"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Logout / Switch Shop</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* BUSINESS LOGO SETTING SECTION (Pure white card) */}

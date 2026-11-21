@@ -174,8 +174,8 @@ export const DayClosingModal: React.FC<DayClosingModalProps> = ({ isOpen, onClos
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 sm:p-5 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-2xl rounded-3xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[92vh] flex flex-col">
+    <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/75 p-3 sm:p-5 backdrop-blur-xs overflow-y-auto overscroll-contain">
+      <div className="relative w-full max-w-2xl rounded-3xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-auto max-h-[calc(var(--vv-height,100dvh)-1.5rem)] sm:max-h-[92vh] flex flex-col">
         {/* Modal Header */}
         <div className="bg-slate-900 p-4 sm:p-5 text-white flex items-center justify-between border-b border-amber-400/30">
           <div className="flex items-center gap-3">
@@ -228,7 +228,7 @@ export const DayClosingModal: React.FC<DayClosingModalProps> = ({ isOpen, onClos
         </div>
 
         {/* Content Area */}
-        <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4 bg-white text-slate-900">
+        <div className="p-4 sm:p-5 overflow-y-auto overscroll-contain flex-1 space-y-4 keyboard-modal-body bg-white text-slate-900">
           {activeTab === 'today' ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl bg-slate-50 border border-slate-200">

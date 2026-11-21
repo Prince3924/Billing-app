@@ -342,8 +342,8 @@ export const AdminCreateShopPage: React.FC = () => {
 
       {/* Big Shop Created Popup */}
       {createdModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-3xl bg-slate-900 border-2 border-amber-500 p-6 sm:p-8 text-center shadow-2xl relative">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/80 p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-lg my-auto rounded-3xl bg-slate-900 border-2 border-amber-500 p-6 sm:p-8 text-center shadow-2xl relative">
             <button
               type="button"
               onClick={() => setCreatedModal(null)}

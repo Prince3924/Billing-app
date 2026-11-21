@@ -127,8 +127,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-xs">
-      <div className="relative w-full max-w-md rounded-2xl bg-white text-slate-900 shadow-2xl overflow-hidden border border-slate-200">
+    <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/75 p-3 backdrop-blur-xs overflow-y-auto overscroll-contain">
+      <div className="relative w-full max-w-md my-auto rounded-2xl bg-white text-slate-900 shadow-2xl overflow-hidden border border-slate-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 bg-amber-50 px-4 py-3">
           <div className="flex items-center gap-2">

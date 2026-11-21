@@ -386,8 +386,8 @@ export const SmartLogoMakerModal: React.FC<SmartLogoMakerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-60 flex items-start sm:items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
-      <div className="relative w-full max-w-lg rounded-3xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-4 sm:my-auto">
+    <div className="keyboard-modal-overlay fixed inset-0 z-60 flex items-start sm:items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+      <div className="relative w-full max-w-lg rounded-3xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-auto">
         <div className="bg-slate-900 px-5 py-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="h-9 w-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
@@ -406,7 +406,7 @@ export const SmartLogoMakerModal: React.FC<SmartLogoMakerModalProps> = ({
           </button>
         </div>
 
-        <div className="p-5 space-y-4 max-h-[82vh] overflow-y-auto pb-24 sm:pb-5">
+        <div className="p-5 space-y-4 max-h-[calc(var(--vv-height,100dvh)-5.5rem)] sm:max-h-[82vh] overflow-y-auto overscroll-contain pb-24 sm:pb-5 keyboard-modal-body">
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
               {t('shopNameLabel')}

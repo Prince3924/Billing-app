@@ -752,7 +752,7 @@ export const CustomerOrderPublicPage: React.FC = () => {
 
       {/* Sticky Bottom Order Bar */}
       {cartItems.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 shadow-2xl p-3 sm:p-4">
+        <div className="keyboard-sticky-bottom fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 shadow-2xl p-3 sm:p-4">
           <div className="max-w-2xl mx-auto space-y-3">
             {validationError && (
               <div className="rounded-xl bg-rose-50 border border-rose-200 p-2 text-rose-800 text-xs font-bold flex items-center gap-1.5">

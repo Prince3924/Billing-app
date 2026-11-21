@@ -146,19 +146,6 @@ function shopApiPlugin(): Plugin {
 
         // 6. GET /api/admin/shops
         if (url === '/api/admin/shops' && req.method === 'GET') {
-          if (!shopsDb['y-k-electricals-8742']) {
-            shopsDb['y-k-electricals-8742'] = {
-              shopInfo: {
-                id: 'y-k-electricals-8742',
-                name: 'Y.K. Electricals',
-                address: '',
-                mobile: '',
-              },
-              products: [],
-              updatedAt: new Date().toISOString(),
-            };
-            saveData(SHOPS_FILE, shopsDb);
-          }
           const list = Object.entries(shopsDb).map(([id, entry]: [string, any]) => ({
             shopId: id,
             ownerCode: `${id}-955`,
@@ -229,19 +216,6 @@ function shopApiPlugin(): Plugin {
               res.statusCode = 401;
               return res.end(JSON.stringify({ valid: false, error: 'Wrong Code' }));
             }
-            if (shopId === 'y-k-electricals-8742' && !shopsDb[shopId]) {
-              shopsDb[shopId] = {
-                shopInfo: {
-                  id: shopId,
-                  name: 'Y.K. Electricals',
-                  address: '',
-                  mobile: '',
-                },
-                products: [],
-                updatedAt: new Date().toISOString(),
-              };
-              saveData(SHOPS_FILE, shopsDb);
-            }
             const entry = shopsDb[shopId];
             if (!entry) {
               res.statusCode = 401;
@@ -257,6 +231,25 @@ function shopApiPlugin(): Plugin {
               })
             );
           });
+        }
+
+        // 9. DELETE /api/shops/:shopId
+        const deleteShopMatch = url.match(/^\/api\/shops\/([^/?]+)$/);
+        if (deleteShopMatch && req.method === 'DELETE') {
+          const cleanId = decodeURIComponent(deleteShopMatch[1]).trim().toLowerCase();
+          let deleted = false;
+          if (cleanId && cleanId in shopsDb) {
+            delete shopsDb[cleanId];
+            saveData(SHOPS_FILE, shopsDb);
+            deleted = true;
+          }
+          if (cleanId && cleanId in ordersDb) {
+            delete ordersDb[cleanId];
+            saveData(ORDERS_FILE, ordersDb);
+            deleted = true;
+          }
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ success: true, shopId: cleanId, deleted }));
         }
 
         next();

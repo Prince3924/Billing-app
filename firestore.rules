@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidShopId(shopId) {
+      return shopId is string && shopId.size() >= 2 && shopId.size() <= 80;
+    }
+
+    function isValidMobile(mobile) {
+      return mobile is string && mobile.matches('^[0-9]{10}$');
+    }
+
+    function isValidShopDoc(shopId) {
+      let data = request.resource.data;
+      return isValidShopId(shopId)
+        && data.shopId == shopId
+        && data.ownerCode == (shopId + '-955')
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 120;
+    }
+
+    function isValidScopedRecord(shopId, recordId) {
+      let data = request.resource.data;
+      return isValidShopId(shopId)
+        && exists(/databases/$(database)/documents/shops/$(shopId))
+        && data.shopId == shopId
+        && data.id is string
+        && data.id == recordId;
+    }
+
+    function isValidStaffDirectoryDoc(mobile) {
+      let data = request.resource.data;
+      return isValidMobile(mobile)
+        && data.mobile == mobile
+        && isValidShopId(data.shopId)
+        && exists(/databases/$(database)/documents/shops/$(data.shopId))
+        && data.staffId is string
+        && data.staffId.size() >= 2
+        && data.staffId.size() <= 120
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 120
+        && data.role in ['MANAGER', 'CASHIER']
+        && data.pinHash is string
+        && data.pinHash.size() >= 16
+        && data.pinHash.size() <= 128
+        && data.isActive is bool;
+    }
+
+    // Startup connection check document
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // Staff mobile lookup: allow exact get by 10-digit mobile, never allow listing all staff
+    match /staffDirectory/{mobile} {
+      allow get: if isValidMobile(mobile);
+      allow list: if false;
+      allow create, update: if isValidStaffDirectoryDoc(mobile);
+      allow delete: if isValidMobile(mobile);
+    }
+
+    // Multi-shop root documents: allow get/create/update by exact shopId, never allow listing all shops
+    match /shops/{shopId} {
+      allow get: if isValidShopId(shopId);
+      allow list: if false;
+      allow create, update: if isValidShopDoc(shopId);
+      allow delete: if isValidShopId(shopId);
+
+      match /products/{productId} {
+        allow get, list: if isValidShopId(shopId);
+        allow create, update: if isValidScopedRecord(shopId, productId);
+        allow delete: if isValidShopId(shopId);
+      }
+
+      match /bills/{billId} {
+        allow get, list: if isValidShopId(shopId);
+        allow create, update: if isValidScopedRecord(shopId, billId);
+        allow delete: if isValidShopId(shopId);
+      }
+
+      match /orders/{orderId} {
+        allow get, list: if isValidShopId(shopId);
+        allow create, update: if isValidScopedRecord(shopId, orderId);
+        allow delete: if isValidShopId(shopId);
+      }
+
+      match /dayClosings/{closingId} {
+        allow get, list: if isValidShopId(shopId);
+        allow create, update: if isValidScopedRecord(shopId, closingId);
+        allow delete: if isValidShopId(shopId);
+      }
+
+      match /supplierLedger/{supplierId} {
+        allow get, list: if isValidShopId(shopId);
+        allow create, update: if isValidScopedRecord(shopId, supplierId);
+        allow delete: if isValidShopId(shopId);
+      }
+
+      match /staff/{staffId} {
+        allow get, list: if isValidShopId(shopId);
+        allow create, update: if isValidScopedRecord(shopId, staffId);
+        allow delete: if isValidShopId(shopId);
+      }
+
+      match /items/{itemId} {
+        allow get, list, delete: if isValidShopId(shopId);
+        allow create, update: if false;
+      }
+
+      match /customers/{customerId} {
+        allow get, list, delete: if isValidShopId(shopId);
+        allow create, update: if false;
+      }
+
+      match /settings/{settingId} {
+        allow get, list, delete: if isValidShopId(shopId);
+        allow create, update: if false;
+      }
+    }
+
+    // Default deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

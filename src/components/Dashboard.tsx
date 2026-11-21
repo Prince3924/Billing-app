@@ -25,11 +25,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
     bills,
     products,
     shopInfo,
+    activeStaff,
     t,
   } = useShop();
 
+  const isStaff = Boolean(activeStaff);
+  const todayStr = new Date().toISOString().split('T')[0];
   const [isDayClosingOpen, setIsDayClosingOpen] = useState(false);
-  const recentBills = bills.filter((b) => !b.isEstimate).slice(0, 5);
+  const recentBills = bills
+    .filter((b) => !b.isEstimate && (!isStaff || b.date.startsWith(todayStr)))
+    .slice(0, 5);
 
   const { expiredProducts, expiringSoonProducts } = useMemo(() => {
     const today = new Date(new Date().toDateString());
@@ -59,7 +64,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
   return (
     <div className="space-y-5">
       {/* 0. NEW CUSTOMER ORDERS RED BADGE ALERT */}
-      {newOrdersCount > 0 && (
+      {!isStaff && newOrdersCount > 0 && (
         <div
           onClick={handleOpenNewOrders}
           className="rounded-2xl border-2 border-red-500 bg-red-50 p-4 shadow-md flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-red-100/80 transition"
@@ -100,7 +105,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
       )}
 
       {/* 1. TOP URGENT LOW STOCK ALERT */}
-      <LowStockBanner />
+      {!isStaff && <LowStockBanner />}
 
       {/* 2. EXPIRED / EXPIRING SOON ALERT BANNER */}
       {(expiredProducts.length > 0 || expiringSoonProducts.length > 0) && (
@@ -175,13 +180,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={() => setIsDayClosingOpen(true)}
-            className="flex items-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/50 px-3.5 py-2.5 sm:py-3 text-amber-300 font-bold text-sm transition active:scale-95 cursor-pointer shadow-sm"
-          >
-            <Moon className="h-4 w-4 text-amber-400" />
-            <span>{t('dayClosingBtn')}</span>
-          </button>
+          {!isStaff && (
+            <button
+              onClick={() => setIsDayClosingOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/50 px-3.5 py-2.5 sm:py-3 text-amber-300 font-bold text-sm transition active:scale-95 cursor-pointer shadow-sm"
+            >
+              <Moon className="h-4 w-4 text-amber-400" />
+              <span>{t('dayClosingBtn')}</span>
+            </button>
+          )}
 
           <button
             onClick={() => setActiveTab('billing')}
@@ -202,7 +209,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
       </div>
 
       {/* PRIMARY STATS GRID */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+      <div className={`grid grid-cols-1 ${isStaff ? '' : 'sm:grid-cols-2 lg:grid-cols-3'} gap-3.5`}>
         <div className="relative overflow-hidden rounded-2xl bg-white p-4 sm:p-5 shadow-sm border-2 border-emerald-500/40">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
@@ -223,7 +230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
           </div>
         </div>
 
-        {(() => {
+        {!isStaff && (() => {
           const profitVal = todayStats.totalProfit;
           const profitTheme =
             profitVal > 0
@@ -279,78 +286,82 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
           );
         })()}
 
-        <div className="relative overflow-hidden rounded-2xl bg-white p-4 sm:p-5 shadow-sm border-2 border-blue-500/40">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
-              {t('totalStockValue')}
-            </span>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-xs">
-              <PackageCheck className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono tracking-tight">
-              ₹{totalStockValue.purchaseValue.toLocaleString('en-IN')}
-            </div>
-            <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-              <span>{t('atMrpPrefix')} ₹{totalStockValue.retailValue.toLocaleString('en-IN')}</span>
-              <span className="font-semibold text-blue-700">
-                {products.length} {t('productsLabel')} ({totalStockValue.totalQuantity} {t('pcsUnit')})
+        {!isStaff && (
+          <div className="relative overflow-hidden rounded-2xl bg-white p-4 sm:p-5 shadow-sm border-2 border-blue-500/40">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
+                {t('totalStockValue')}
               </span>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-xs">
+                <PackageCheck className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono tracking-tight">
+                ₹{totalStockValue.purchaseValue.toLocaleString('en-IN')}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                <span>{t('atMrpPrefix')} ₹{totalStockValue.retailValue.toLocaleString('en-IN')}</span>
+                <span className="font-semibold text-blue-700">
+                  {products.length} {t('productsLabel')} ({totalStockValue.totalQuantity} {t('pcsUnit')})
+                </span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* SECONDARY SALE CARDS */}
-      <div>
-        <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2 px-1">
-          {t('salesOverviewHeader')}
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-xs">
-            <div className="flex justify-between items-center text-xs text-slate-500">
-              <span className="font-bold text-slate-700">{t('yesterdaySale')}</span>
-              <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded font-mono">{t('minusOneDayTag')}</span>
+      {!isStaff && (
+        <div>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2 px-1">
+            {t('salesOverviewHeader')}
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-xs">
+              <div className="flex justify-between items-center text-xs text-slate-500">
+                <span className="font-bold text-slate-700">{t('yesterdaySale')}</span>
+                <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded font-mono">{t('minusOneDayTag')}</span>
+              </div>
+              <div className="mt-2 text-xl font-black text-slate-900 font-mono">
+                ₹{yesterdayStats.totalSale.toLocaleString('en-IN')}
+              </div>
+              <div className="mt-1 flex justify-between text-xs text-slate-500">
+                <span>{t('profitBadge')}: <strong className="text-emerald-700">₹{yesterdayStats.totalProfit}</strong></span>
+                <span>{yesterdayStats.totalItems} {t('itemsLabel')}</span>
+              </div>
             </div>
-            <div className="mt-2 text-xl font-black text-slate-900 font-mono">
-              ₹{yesterdayStats.totalSale.toLocaleString('en-IN')}
-            </div>
-            <div className="mt-1 flex justify-between text-xs text-slate-500">
-              <span>{t('profitBadge')}: <strong className="text-emerald-700">₹{yesterdayStats.totalProfit}</strong></span>
-              <span>{yesterdayStats.totalItems} {t('itemsLabel')}</span>
-            </div>
-          </div>
 
-          <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-xs">
-            <div className="flex justify-between items-center text-xs text-slate-500">
-              <span className="font-bold text-slate-700">{t('last7DaysSale')}</span>
-              <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded font-mono">{t('sevenDaysTag')}</span>
+            <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-xs">
+              <div className="flex justify-between items-center text-xs text-slate-500">
+                <span className="font-bold text-slate-700">{t('last7DaysSale')}</span>
+                <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded font-mono">{t('sevenDaysTag')}</span>
+              </div>
+              <div className="mt-2 text-xl font-black text-slate-900 font-mono">
+                ₹{last7DaysStats.totalSale.toLocaleString('en-IN')}
+              </div>
+              <div className="mt-1 flex justify-between text-xs text-slate-500">
+                <span>{t('profitBadge')}: <strong className="text-emerald-700">₹{last7DaysStats.totalProfit}</strong></span>
+                <span>{last7DaysStats.billCount} {t('billsCount')}</span>
+              </div>
             </div>
-            <div className="mt-2 text-xl font-black text-slate-900 font-mono">
-              ₹{last7DaysStats.totalSale.toLocaleString('en-IN')}
-            </div>
-            <div className="mt-1 flex justify-between text-xs text-slate-500">
-              <span>{t('profitBadge')}: <strong className="text-emerald-700">₹{last7DaysStats.totalProfit}</strong></span>
-              <span>{last7DaysStats.billCount} {t('billsCount')}</span>
-            </div>
-          </div>
 
-          <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-xs">
-            <div className="flex justify-between items-center text-xs text-slate-500">
-              <span className="font-bold text-slate-700">{t('thisMonthSale')}</span>
-              <span className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold">{t('monthTag')}</span>
-            </div>
-            <div className="mt-2 text-xl font-black text-slate-900 font-mono">
-              ₹{thisMonthStats.totalSale.toLocaleString('en-IN')}
-            </div>
-            <div className="mt-1 flex justify-between text-xs text-slate-500">
-              <span>{t('profitBadge')}: <strong className="text-emerald-700">₹{thisMonthStats.totalProfit}</strong></span>
-              <span>{thisMonthStats.billCount} {t('billsCount')}</span>
+            <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-xs">
+              <div className="flex justify-between items-center text-xs text-slate-500">
+                <span className="font-bold text-slate-700">{t('thisMonthSale')}</span>
+                <span className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold">{t('monthTag')}</span>
+              </div>
+              <div className="mt-2 text-xl font-black text-slate-900 font-mono">
+                ₹{thisMonthStats.totalSale.toLocaleString('en-IN')}
+              </div>
+              <div className="mt-1 flex justify-between text-xs text-slate-500">
+                <span>{t('profitBadge')}: <strong className="text-emerald-700">₹{thisMonthStats.totalProfit}</strong></span>
+                <span>{thisMonthStats.billCount} {t('billsCount')}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* QUICK SHORTCUTS & RECENT BILLS SECTION */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -391,37 +402,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
             <ArrowRight className="h-4 w-4 text-slate-400" />
           </div>
 
-          <div
-            onClick={() => setActiveTab('profit-report')}
-            className="rounded-2xl bg-white p-3.5 border border-slate-200 hover:border-amber-400 hover:shadow-sm cursor-pointer transition flex items-center justify-between"
-          >
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-900 flex items-center justify-center font-bold">
-                📊
+          {!isStaff && (
+            <>
+              <div
+                onClick={() => setActiveTab('profit-report')}
+                className="rounded-2xl bg-white p-3.5 border border-slate-200 hover:border-amber-400 hover:shadow-sm cursor-pointer transition flex items-center justify-between"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-900 flex items-center justify-center font-bold">
+                    📊
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">{t('shortcutProfitTitle')}</h4>
+                    <p className="text-xs text-slate-500">{t('shortcutProfitSub')}</p>
+                  </div>
+                </div>
+                <ArrowRight className="h-4 w-4 text-slate-400" />
               </div>
-              <div>
-                <h4 className="font-bold text-slate-900 text-sm">{t('shortcutProfitTitle')}</h4>
-                <p className="text-xs text-slate-500">{t('shortcutProfitSub')}</p>
-              </div>
-            </div>
-            <ArrowRight className="h-4 w-4 text-slate-400" />
-          </div>
 
-          <div
-            onClick={() => setActiveTab('low-stock')}
-            className="rounded-2xl bg-red-50 p-3.5 border border-red-200 hover:border-red-400 hover:shadow-sm cursor-pointer transition flex items-center justify-between"
-          >
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold">
-                ⚠️
+              <div
+                onClick={() => setActiveTab('low-stock')}
+                className="rounded-2xl bg-red-50 p-3.5 border border-red-200 hover:border-red-400 hover:shadow-sm cursor-pointer transition flex items-center justify-between"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold">
+                    ⚠️
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-red-900 text-sm">{t('shortcutLowStockTitle')}</h4>
+                    <p className="text-xs text-red-700 font-semibold">{lowStockProducts.length} {t('shortcutLowStockSub')}</p>
+                  </div>
+                </div>
+                <ArrowRight className="h-4 w-4 text-red-400" />
               </div>
-              <div>
-                <h4 className="font-bold text-red-900 text-sm">{t('shortcutLowStockTitle')}</h4>
-                <p className="text-xs text-red-700 font-semibold">{lowStockProducts.length} {t('shortcutLowStockSub')}</p>
-              </div>
-            </div>
-            <ArrowRight className="h-4 w-4 text-red-400" />
-          </div>
+            </>
+          )}
         </div>
 
         {/* Recent Bills Ticker */}
@@ -470,15 +485,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
                     <p className="text-xs text-slate-500 mt-0.5">
                       {b.customerName || t('customer')} • {b.items.length} {t('itemsLabel')} ({b.items.map(i => i.productName.split(' ')[0]).join(', ')})
                     </p>
+                    {b.billByLabel && (
+                      <p className="text-[10px] font-bold text-blue-700 mt-0.5">
+                        {b.billByLabel}
+                      </p>
+                    )}
                   </div>
 
                   <div className="text-right">
                     <div className="font-black text-slate-900 text-sm font-mono">
                       ₹{b.grandTotal}
                     </div>
-                    <span className="text-[10px] text-emerald-600 font-bold block">
-                      +₹{b.totalProfit} {t('profitBadge')}
-                    </span>
+                    {!isStaff && (
+                      <span className="text-[10px] text-emerald-600 font-bold block">
+                        +₹{b.totalProfit} {t('profitBadge')}
+                      </span>
+                    )}
                   </div>
                 </div>
               ))
@@ -487,10 +509,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddProduct }) => {
         </div>
       </div>
 
-      <DayClosingModal
-        isOpen={isDayClosingOpen}
-        onClose={() => setIsDayClosingOpen(false)}
-      />
+      {!isStaff && (
+        <DayClosingModal
+          isOpen={isDayClosingOpen}
+          onClose={() => setIsDayClosingOpen(false)}
+        />
+      )}
     </div>
   );
 };

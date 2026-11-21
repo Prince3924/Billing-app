@@ -11,12 +11,29 @@ import {
   CustomerOrder,
   DayClosingRecord,
   BillingDraft,
+  StaffMember,
+  StaffRole,
+  ActiveStaffSession,
 } from '../types';
 import { INITIAL_PRODUCTS, INITIAL_BILLS, INITIAL_SHOP_INFO } from '../data/initialData';
 import { en, t as translateKey, normalizeLang } from '../locales/translations.js';
 export type TranslationKey = keyof typeof en;
-import { saveToIndexedDb, getFromIndexedDb, clearAllOfflineData } from '../utils/offlineDb';
+import { saveToIndexedDb, getFromIndexedDb, deleteShopOfflineData } from '../utils/offlineDb';
 import { getNextBillNumber } from '../utils/billNumber';
+import {
+  syncShopMetaToCloud,
+  verifyOwnerCodeInCloud,
+  restoreShopDataFromCloud,
+  restoreShopDataForStaffFromCloud,
+  syncShopCollectionToCloud,
+  upsertShopCollectionToCloud,
+  lookupStaffByMobileInCloud,
+  syncStaffDirectoryEntry,
+  deleteStaffDirectoryEntry,
+  deleteShopCompletelyFromCloud,
+  StaffDirectoryDoc,
+} from '../utils/firebaseShopSync';
+import { normalizeMobile10, hashStaffPin, formatBillByLabel } from '../utils/pinHash';
 
 interface DashboardStats {
   totalSale: number;
@@ -50,7 +67,8 @@ interface ShopContextType {
   // Setup & App Reset
   isSetupComplete: boolean;
   setIsSetupComplete: (val: boolean) => void;
-  fullAppReset: () => Promise<void>;
+  fullAppReset: (options?: { deferLogout?: boolean }) => Promise<void>;
+  finalizeResetLogout: () => void;
   completeSetup: (newShopInfo?: Partial<ShopInfo>, loadDemoProducts?: boolean) => void;
 
   // Product actions
@@ -105,10 +123,41 @@ interface ShopContextType {
   importBackup: (jsonString: string) => boolean;
   resetToDefault: () => void;
 
-  // Owner Code multi-shop isolation
+  // Owner Code & Staff Access multi-shop isolation
   activeShopId: string | null;
-  loginWithOwnerCode: (ownerCode: string, rememberMe?: boolean) => Promise<{ ok: boolean; error?: string }>;
+  activeStaff: ActiveStaffSession | null;
+  staffMembers: StaffMember[];
+  loginWithOwnerCode: (
+    ownerCode: string,
+    rememberMe?: boolean
+  ) => Promise<{ ok: boolean; notFound?: boolean; error?: string }>;
+  loginWithStaffCredentials: (
+    mobile: string,
+    pin: string,
+    rememberMe?: boolean
+  ) => Promise<{ ok: boolean; error?: string }>;
+  createNewShop: (data: {
+    name: string;
+    ownerName?: string;
+    mobile?: string;
+    rememberMe?: boolean;
+  }) => Promise<{ ok: boolean; shopId?: string; ownerCode?: string; error?: string }>;
   logoutOwner: () => void;
+
+  // Owner Staff Accounts CRUD
+  addStaffMember: (data: {
+    name: string;
+    mobile: string;
+    pin: string;
+    role: StaffRole;
+  }) => Promise<{ ok: boolean; staff?: StaffMember; error?: string }>;
+  updateStaffMember: (
+    staffId: string,
+    updates: { name: string; mobile: string; role: StaffRole; isActive: boolean }
+  ) => Promise<{ ok: boolean; error?: string }>;
+  changeStaffPin: (staffId: string, newPin: string) => Promise<{ ok: boolean; error?: string }>;
+  toggleStaffActive: (staffId: string) => Promise<{ ok: boolean; error?: string }>;
+  deleteStaffMember: (staffId: string) => Promise<{ ok: boolean; error?: string }>;
 
   // Search & Navigation helpers
   searchQuery: string;
@@ -136,6 +185,8 @@ const STORAGE_KEYS = {
 };
 
 const ACTIVE_SHOP_KEY = 'yk_active_owner_shop_id_v1';
+const ACTIVE_STAFF_SESSION_KEY = 'yk_active_staff_session_v1';
+const LOCAL_STAFF_DIRECTORY_KEY = 'yk_staff_directory_v1';
 const EXPLICIT_LOGOUT_KEY = 'yk_owner_explicit_logout_v1';
 const REGISTERED_SHOPS_KEY = 'yk_registered_shops_v1';
 const LEGACY_YK_SHOP_ID = 'y-k-electricals-8742';
@@ -150,6 +201,7 @@ function getShopStorageKeys(shopId: string) {
     SUPPLIERS: `${prefix}_suppliers_v1`,
     ORDERS: `${prefix}_orders_v1`,
     DAY_CLOSING: `${prefix}_day_closing_v1`,
+    STAFF: `${prefix}_staff_v1`,
     SETUP_DONE: `${prefix}_setup_done_v1`,
   };
 }
@@ -320,6 +372,58 @@ function readJsonStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function readActiveStaffSession(expectedShopId: string | null): ActiveStaffSession | null {
+  if (!expectedShopId) return null;
+  try {
+    if (localStorage.getItem(EXPLICIT_LOGOUT_KEY) === 'true') return null;
+    const raw =
+      localStorage.getItem(ACTIVE_STAFF_SESSION_KEY) ||
+      sessionStorage.getItem(ACTIVE_STAFF_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ActiveStaffSession;
+    if (
+      parsed &&
+      parsed.staffId &&
+      parsed.shopId &&
+      parsed.shopId.trim().toLowerCase() === expectedShopId.trim().toLowerCase() &&
+      (parsed.role === 'MANAGER' || parsed.role === 'CASHIER')
+    ) {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function readLocalStaffDirectory(): Record<string, StaffDirectoryDoc> {
+  return readJsonStorage<Record<string, StaffDirectoryDoc>>(LOCAL_STAFF_DIRECTORY_KEY, {});
+}
+
+function writeLocalStaffDirectoryEntry(entry: StaffDirectoryDoc): void {
+  try {
+    const dir = readLocalStaffDirectory();
+    dir[entry.mobile] = entry;
+    localStorage.setItem(LOCAL_STAFF_DIRECTORY_KEY, JSON.stringify(dir));
+  } catch {
+    // ignore
+  }
+}
+
+function removeLocalStaffDirectoryEntry(mobile: string): void {
+  try {
+    const clean = normalizeMobile10(mobile);
+    if (!clean) return;
+    const dir = readLocalStaffDirectory();
+    if (clean in dir) {
+      delete dir[clean];
+      localStorage.setItem(LOCAL_STAFF_DIRECTORY_KEY, JSON.stringify(dir));
+    }
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Safely recover any data written under owner-scoped keys (yk_owner_<mobile>_*)
  * back into standard STORAGE_KEYS.* so no bills, stock, customers, or ledgers are lost.
@@ -464,9 +568,81 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [language]
   );
 
-  // Active Shop ID (persisted for Offline Owner App)
+  // Active Shop ID & Staff Session (persisted for Offline Owner/Staff App)
   const [activeShopId, setActiveShopId] = useState<string | null>(() => readActiveShopId());
+  const [activeStaff, setActiveStaff] = useState<ActiveStaffSession | null>(() =>
+    readActiveStaffSession(readActiveShopId())
+  );
   const loadedShopRef = useRef<string | null>(activeShopId);
+  const isDeletingShopRef = useRef<boolean>(false);
+  const deletedShopIdsRef = useRef<Set<string>>(new Set());
+  const cloudVerifiedShopRef = useRef<string | null>(null);
+
+  const purgeLocalShopStorage = useCallback((targetShopId: string, clearLegacyUnscoped = false) => {
+    const cleanId = (targetShopId || '').trim().toLowerCase();
+    if (!cleanId) return;
+    try {
+      const sKeys = getShopStorageKeys(cleanId);
+      Object.values(sKeys).forEach((k) => localStorage.removeItem(k));
+      localStorage.removeItem(`public_shop_cache_${cleanId}`);
+
+      const scopedPrefix = `yk_shop_${cleanId}_`;
+      const keysToDelete: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(scopedPrefix)) {
+          keysToDelete.push(key);
+        }
+      }
+      keysToDelete.forEach((k) => localStorage.removeItem(k));
+
+      const regList = readJsonStorage<Array<{ shopId?: string }>>(REGISTERED_SHOPS_KEY, []);
+      if (Array.isArray(regList)) {
+        const filtered = regList.filter(
+          (item) => (item?.shopId || '').trim().toLowerCase() !== cleanId
+        );
+        if (filtered.length > 0) {
+          localStorage.setItem(REGISTERED_SHOPS_KEY, JSON.stringify(filtered));
+        } else {
+          localStorage.removeItem(REGISTERED_SHOPS_KEY);
+        }
+      }
+
+      const staffDir = readLocalStaffDirectory();
+      let staffDirChanged = false;
+      for (const mKey of Object.keys(staffDir)) {
+        if ((staffDir[mKey]?.shopId || '').trim().toLowerCase() === cleanId) {
+          delete staffDir[mKey];
+          staffDirChanged = true;
+        }
+      }
+      if (staffDirChanged) {
+        if (Object.keys(staffDir).length > 0) {
+          localStorage.setItem(LOCAL_STAFF_DIRECTORY_KEY, JSON.stringify(staffDir));
+        } else {
+          localStorage.removeItem(LOCAL_STAFF_DIRECTORY_KEY);
+        }
+      }
+
+      if (clearLegacyUnscoped) {
+        localStorage.removeItem(ACTIVE_SHOP_KEY);
+        sessionStorage.removeItem(ACTIVE_SHOP_KEY);
+        localStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+        sessionStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+        localStorage.setItem(EXPLICIT_LOGOUT_KEY, 'true');
+        localStorage.removeItem(STORAGE_KEYS.SHOP_INFO);
+        localStorage.removeItem(STORAGE_KEYS.PRODUCTS);
+        localStorage.removeItem(STORAGE_KEYS.BILLS);
+        localStorage.removeItem(STORAGE_KEYS.REFILLS);
+        localStorage.removeItem(STORAGE_KEYS.SUPPLIERS);
+        localStorage.removeItem(STORAGE_KEYS.ORDERS);
+        localStorage.removeItem(STORAGE_KEYS.DAY_CLOSING);
+        localStorage.removeItem(STORAGE_KEYS.SETUP_DONE);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   const loadShopDataset = useCallback(
     (
@@ -626,7 +802,7 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   });
 
   const [dayClosingRecords, setDayClosingRecords] = useState<DayClosingRecord[]>(() => {
-    if (activeShopId) {
+    if (activeShopId && !activeStaff) {
       const sKeys = getShopStorageKeys(activeShopId);
       const saved = readJsonStorage<DayClosingRecord[]>(sKeys.DAY_CLOSING, []);
       return Array.isArray(saved) ? saved : [];
@@ -634,93 +810,162 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return [];
   });
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>(() => {
+    if (activeShopId && !activeStaff) {
+      const sKeys = getShopStorageKeys(activeShopId);
+      const saved = readJsonStorage<StaffMember[]>(sKeys.STAFF, []);
+      return Array.isArray(saved) ? saved : [];
+    }
+    return [];
+  });
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() =>
+    activeStaff?.role === 'CASHIER' ? 'billing' : 'dashboard'
+  );
   const [rateListSubTab, setRateListSubTab] = useState<RateListSubTab>('qr-poster');
   const [billingDraft, setBillingDraft] = useState<BillingDraft | null>(null);
 
   // Owner Code Login (Accepts SHOP_ID-955 or SHOP_ID, case-insensitive, trims spaces)
+  // NEVER auto-creates a shop on login — verifies Firestore document existence first.
   const loginWithOwnerCode = async (
     rawOwnerCode: string,
     rememberMe = true
-  ): Promise<{ ok: boolean; error?: string }> => {
+  ): Promise<{ ok: boolean; notFound?: boolean; error?: string }> => {
     const cleanInput = (rawOwnerCode || '').trim().toLowerCase().replace(/\s+/g, '');
     if (!cleanInput) {
-      return { ok: false, error: 'Wrong Code' };
+      return { ok: false, notFound: true, error: 'Shop not found or deleted. Please create a new shop.' };
     }
 
-    const shopId = cleanInput.endsWith('-955') && cleanInput.length > 4
-      ? cleanInput.slice(0, -4)
-      : cleanInput;
+    const shopId =
+      cleanInput.endsWith('-955') && cleanInput.length > 4
+        ? cleanInput.slice(0, -4)
+        : cleanInput;
 
-    if (!shopId) {
-      return { ok: false, error: 'Wrong Code' };
+    if (!shopId || shopId.length < 2) {
+      return { ok: false, notFound: true, error: 'Shop not found or deleted. Please create a new shop.' };
     }
 
-    const normalizedOwnerCode = `${shopId}-955`;
+    if (deletedShopIdsRef.current.has(shopId)) {
+      return { ok: false, notFound: true, error: 'Shop not found or deleted. Please create a new shop.' };
+    }
+
     let serverSeed: { shopInfo?: Partial<ShopInfo>; products?: Product[] } | undefined;
+    let cloudRestore: Awaited<ReturnType<typeof restoreShopDataFromCloud>> = null;
     let verified = false;
-    let serverRejected = false;
+    let cloudReachable = false;
 
+    // 1. FIRST check directly against Firestore server: getDocFromServer(doc(db, 'shops', shopId))
     try {
-      const res = await fetch('/api/shops/verify-owner', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerCode: normalizedOwnerCode }),
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data?.valid && data?.shopId) {
-          verified = true;
-          serverSeed = {
-            shopInfo: data.shopInfo,
-            products: Array.isArray(data.products) ? data.products : undefined,
-          };
-        }
-      } else if (res.status === 401 && contentType.includes('application/json')) {
-        serverRejected = true;
+      const cloudShop = await verifyOwnerCodeInCloud(shopId);
+      cloudReachable = true;
+      if (!cloudShop) {
+        // Document does NOT exist in Firestore (never created or deleted).
+        // Never auto-create and never fall back to stale local caches.
+        deletedShopIdsRef.current.add(shopId);
+        purgeLocalShopStorage(shopId);
+        deleteShopOfflineData(shopId).catch(() => {});
+        fetch(`/api/shops/${encodeURIComponent(shopId)}`, { method: 'DELETE' }).catch(() => {});
+        return {
+          ok: false,
+          notFound: true,
+          error: 'Shop not found or deleted. Please create a new shop.',
+        };
+      }
+
+      verified = true;
+      cloudRestore = await restoreShopDataFromCloud(shopId);
+      if (cloudRestore) {
+        serverSeed = {
+          shopInfo: cloudRestore.shopInfo,
+          products: cloudRestore.products,
+        };
+      } else {
+        serverSeed = {
+          shopInfo: {
+            id: shopId,
+            name: cloudShop.name || shopId,
+            mobile: cloudShop.mobile || '',
+            address: cloudShop.address || '',
+            tagline: cloudShop.tagline || '',
+            gstin: cloudShop.gstin || '',
+          },
+        };
       }
     } catch {
-      // Network/offline error — fall through to local verification
+      cloudReachable = false;
     }
 
-    // Local / offline / legacy shop verification fallback
-    if (!verified) {
+    // 2. If genuinely offline / Firestore unreachable, allow ONLY if this exact shopId
+    //    already has complete local shop data cached on this device (never auto-create).
+    if (!verified && !cloudReachable) {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
       const sKeys = getShopStorageKeys(shopId);
-      const hasLocal =
-        localStorage.getItem(sKeys.SHOP_INFO) !== null ||
-        localStorage.getItem(sKeys.PRODUCTS) !== null ||
-        localStorage.getItem(sKeys.BILLS) !== null;
-      const localRegistry = readJsonStorage<Array<{ shopId?: string; name?: string; mobile?: string; address?: string }>>(
-        REGISTERED_SHOPS_KEY,
-        []
-      );
-      const regMatch = localRegistry.find((s) => (s.shopId || '').trim().toLowerCase() === shopId);
-      if (shopId === LEGACY_YK_SHOP_ID || hasLocal || regMatch) {
+      const localShopInfo = readJsonStorage<ShopInfo | null>(sKeys.SHOP_INFO, null);
+      const hasValidLocalShop =
+        Boolean(localShopInfo) &&
+        (localShopInfo?.id || '').trim().toLowerCase() === shopId &&
+        Boolean((localShopInfo?.name || '').trim());
+
+      if (isOffline && hasValidLocalShop) {
         verified = true;
-        if (regMatch) {
-          serverSeed = {
-            shopInfo: {
-              id: shopId,
-              name: regMatch.name || shopId,
-              mobile: regMatch.mobile || '',
-              address: regMatch.address || '',
-            },
-          };
-        }
-      } else if (serverRejected) {
-        return { ok: false, error: 'Wrong Code' };
       }
     }
 
     if (!verified) {
-      return { ok: false, error: 'Wrong Code' };
+      return {
+        ok: false,
+        notFound: true,
+        error: 'Shop not found or deleted. Please create a new shop.',
+      };
     }
 
     const dataset = loadShopDataset(shopId, serverSeed);
     const sKeys = getShopStorageKeys(shopId);
+    let loadedStaff = readJsonStorage<StaffMember[]>(sKeys.STAFF, []);
+    if (!Array.isArray(loadedStaff)) loadedStaff = [];
+
+    // Merge cloud-restored collections on 2nd mobile if local arrays are empty
+    if (cloudRestore) {
+      if (dataset.products.length === 0 && cloudRestore.products.length > 0) {
+        dataset.products = cloudRestore.products;
+      }
+      if (dataset.bills.length === 0 && cloudRestore.bills.length > 0) {
+        dataset.bills = cloudRestore.bills;
+      }
+      if (dataset.suppliers.length === 0 && cloudRestore.suppliers.length > 0) {
+        dataset.suppliers = cloudRestore.suppliers;
+      }
+      if (dataset.customerOrders.length === 0 && cloudRestore.customerOrders.length > 0) {
+        dataset.customerOrders = cloudRestore.customerOrders;
+      }
+      if (dataset.dayClosingRecords.length === 0 && cloudRestore.dayClosingRecords.length > 0) {
+        dataset.dayClosingRecords = cloudRestore.dayClosingRecords;
+      }
+      if (loadedStaff.length === 0 && Array.isArray(cloudRestore.staffMembers) && cloudRestore.staffMembers.length > 0) {
+        loadedStaff = cloudRestore.staffMembers;
+      }
+    }
+
+    // Refresh local staff directory cache for restored staff members
+    loadedStaff.forEach((st) => {
+      if (st && st.mobile && st.id) {
+        writeLocalStaffDirectoryEntry({
+          mobile: normalizeMobile10(st.mobile),
+          shopId,
+          staffId: st.id,
+          name: st.name,
+          role: st.role,
+          pinHash: st.pinHash,
+          isActive: st.isActive,
+          updatedAt: st.updatedAt,
+        });
+      }
+    });
+
     try {
       localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
+      localStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+      sessionStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
       if (rememberMe) {
         localStorage.setItem(ACTIVE_SHOP_KEY, shopId);
         sessionStorage.removeItem(ACTIVE_SHOP_KEY);
@@ -734,17 +979,23 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       localStorage.setItem(sKeys.SUPPLIERS, JSON.stringify(dataset.suppliers));
       localStorage.setItem(sKeys.ORDERS, JSON.stringify(dataset.customerOrders));
       localStorage.setItem(sKeys.DAY_CLOSING, JSON.stringify(dataset.dayClosingRecords));
+      localStorage.setItem(sKeys.STAFF, JSON.stringify(loadedStaff));
     } catch {
       // ignore
     }
 
+    isDeletingShopRef.current = false;
+    deletedShopIdsRef.current.delete(shopId);
+    cloudVerifiedShopRef.current = shopId;
     loadedShopRef.current = shopId;
+    setActiveStaff(null);
     setShopInfo(dataset.shopInfo);
     setProducts(dataset.products);
     setBills(dataset.bills);
     setSuppliers(dataset.suppliers);
     setCustomerOrders(dataset.customerOrders);
     setDayClosingRecords(dataset.dayClosingRecords);
+    setStaffMembers(loadedStaff);
     setBillingDraft(null);
     setIsSetupComplete(dataset.isSetupComplete);
     setActiveTab('dashboard');
@@ -754,18 +1005,515 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return { ok: true };
   };
 
+  // Staff Login (Mobile Number + 4-Digit PIN, NO Owner Code required)
+  const loginWithStaffCredentials = async (
+    rawMobile: string,
+    rawPin: string,
+    rememberMe = true
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const mobile = normalizeMobile10(rawMobile);
+    const pin = (rawPin || '').trim();
+    if (!/^[0-9]{10}$/.test(mobile) || !/^[0-9]{4}$/.test(pin)) {
+      return { ok: false, error: 'Wrong Mobile or PIN, Contact Owner' };
+    }
+
+    let entry: StaffDirectoryDoc | null = null;
+    const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+
+    if (isOnline) {
+      const cloudEntry = await lookupStaffByMobileInCloud(mobile);
+      if (cloudEntry) {
+        entry = cloudEntry;
+        // Cache latest status & pinHash locally so old PIN or deactivated status is immediately reflected offline too
+        writeLocalStaffDirectoryEntry(cloudEntry);
+      }
+    }
+
+    if (!entry) {
+      const localDir = readLocalStaffDirectory();
+      if (localDir[mobile]) {
+        entry = localDir[mobile];
+      }
+    }
+
+    if (!entry) {
+      // Fallback scan of shop-scoped staff lists on this device
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          const m = key.match(/^yk_shop_(.+)_staff_v1$/);
+          if (m && m[1]) {
+            const list = readJsonStorage<StaffMember[]>(key, []);
+            const found = list.find((s) => normalizeMobile10(s.mobile) === mobile);
+            if (found) {
+              entry = {
+                mobile,
+                shopId: m[1],
+                staffId: found.id,
+                name: found.name,
+                role: found.role,
+                pinHash: found.pinHash,
+                isActive: found.isActive,
+                updatedAt: found.updatedAt,
+              };
+              writeLocalStaffDirectoryEntry(entry);
+              break;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!entry || !entry.isActive || !entry.shopId) {
+      return { ok: false, error: 'Wrong Mobile or PIN, Contact Owner' };
+    }
+
+    const computedPinHash = await hashStaffPin(entry.staffId, pin);
+    if (computedPinHash !== entry.pinHash) {
+      return { ok: false, error: 'Wrong Mobile or PIN, Contact Owner' };
+    }
+
+    const shopId = entry.shopId.trim().toLowerCase();
+    let cloudStaffData: Awaited<ReturnType<typeof restoreShopDataForStaffFromCloud>> = null;
+    if (isOnline) {
+      cloudStaffData = await restoreShopDataForStaffFromCloud(shopId);
+    }
+
+    const localDataset = loadShopDataset(shopId, cloudStaffData ? { shopInfo: cloudStaffData.shopInfo, products: cloudStaffData.products } : undefined);
+    let finalProducts = localDataset.products;
+    let finalBills = localDataset.bills;
+    let finalShopInfo = localDataset.shopInfo;
+
+    if (cloudStaffData) {
+      finalShopInfo = ensureShopInfoDefaults(
+        {
+          ...localDataset.shopInfo,
+          ...cloudStaffData.shopInfo,
+          id: shopId,
+        },
+        language
+      );
+
+      // Merge cloud products & local products cleanly (preferring newest updatedAt)
+      if (cloudStaffData.products.length > 0) {
+        const prodMap = new Map<string, Product>();
+        for (const lp of localDataset.products) {
+          if (lp?.id) prodMap.set(lp.id, lp);
+        }
+        for (const cp of cloudStaffData.products) {
+          if (!cp?.id) continue;
+          const existing = prodMap.get(cp.id);
+          if (!existing || new Date(cp.updatedAt || 0).getTime() >= new Date(existing.updatedAt || 0).getTime()) {
+            prodMap.set(cp.id, cp);
+          }
+        }
+        finalProducts = Array.from(prodMap.values());
+      }
+
+      // Merge cloud bills & local bills cleanly
+      if (cloudStaffData.bills.length > 0) {
+        const billMap = new Map<string, Bill>();
+        for (const lb of localDataset.bills) {
+          if (lb?.id) billMap.set(lb.id, lb);
+        }
+        for (const cb of cloudStaffData.bills) {
+          if (cb?.id) billMap.set(cb.id, cb);
+        }
+        finalBills = Array.from(billMap.values()).sort(
+          (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+        );
+      }
+    }
+
+    const session: ActiveStaffSession = {
+      staffId: entry.staffId,
+      shopId,
+      name: entry.name,
+      mobile,
+      role: entry.role,
+      loggedInAt: new Date().toISOString(),
+    };
+
+    const sKeys = getShopStorageKeys(shopId);
+    try {
+      localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
+      if (rememberMe) {
+        localStorage.setItem(ACTIVE_SHOP_KEY, shopId);
+        localStorage.setItem(ACTIVE_STAFF_SESSION_KEY, JSON.stringify(session));
+        sessionStorage.removeItem(ACTIVE_SHOP_KEY);
+        sessionStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+      } else {
+        sessionStorage.setItem(ACTIVE_SHOP_KEY, shopId);
+        sessionStorage.setItem(ACTIVE_STAFF_SESSION_KEY, JSON.stringify(session));
+        localStorage.removeItem(ACTIVE_SHOP_KEY);
+        localStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+      }
+      localStorage.setItem(sKeys.SHOP_INFO, JSON.stringify(finalShopInfo));
+      localStorage.setItem(sKeys.PRODUCTS, JSON.stringify(finalProducts));
+      localStorage.setItem(sKeys.BILLS, JSON.stringify(finalBills));
+    } catch {
+      // ignore
+    }
+
+    loadedShopRef.current = shopId;
+    setActiveStaff(session);
+    setShopInfo(finalShopInfo);
+    setProducts(finalProducts);
+    setBills(finalBills);
+    // Keep sensitive owner-only collections empty in Staff memory
+    setSuppliers([]);
+    setCustomerOrders([]);
+    setDayClosingRecords([]);
+    setStaffMembers([]);
+    setBillingDraft(null);
+    setIsSetupComplete(true);
+    setActiveTab(entry.role === 'CASHIER' ? 'billing' : 'dashboard');
+    setRateListSubTab('qr-poster');
+    setActiveShopId(shopId);
+
+    return { ok: true };
+  };
+
+  const createNewShop = async (data: {
+    name: string;
+    ownerName?: string;
+    mobile?: string;
+    rememberMe?: boolean;
+  }): Promise<{ ok: boolean; shopId?: string; ownerCode?: string; error?: string }> => {
+    isDeletingShopRef.current = false;
+    const cleanName = (data.name || '').trim();
+    if (!cleanName) {
+      return { ok: false, error: 'Shop Name is required' };
+    }
+    const cleanOwner = (data.ownerName || '').trim();
+    const cleanMobile = (data.mobile || '').trim();
+    const shopId = generateShopId(cleanName);
+    const ownerCode = `${shopId}-955`;
+    deletedShopIdsRef.current.delete(shopId);
+
+    const newShopInfo = ensureShopInfoDefaults(
+      {
+        ...INITIAL_SHOP_INFO,
+        id: shopId,
+        name: cleanName,
+        mobile: cleanMobile,
+        address: '',
+        tagline: cleanOwner ? `Owner: ${cleanOwner}` : '',
+        gstin: '',
+      },
+      language
+    );
+
+    // Create the shop document in Firebase Firestore first when online
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      try {
+        await syncShopMetaToCloud(shopId, { ...newShopInfo, ownerName: cleanOwner });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Cloud creation failed';
+        return { ok: false, error: `Could not create shop in cloud: ${msg}` };
+      }
+    }
+
+    // Save locally after cloud document creation succeeds
+    const sKeys = getShopStorageKeys(shopId);
+    try {
+      localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
+      const localRegistry = readJsonStorage<Array<{ shopId: string; ownerCode: string; name: string; mobile: string }>>(
+        REGISTERED_SHOPS_KEY,
+        []
+      );
+      localRegistry.push({ shopId, ownerCode, name: cleanName, mobile: cleanMobile });
+      localStorage.setItem(REGISTERED_SHOPS_KEY, JSON.stringify(localRegistry));
+
+      localStorage.setItem(sKeys.SHOP_INFO, JSON.stringify(newShopInfo));
+      localStorage.setItem(sKeys.PRODUCTS, JSON.stringify([]));
+      localStorage.setItem(sKeys.BILLS, JSON.stringify([]));
+      localStorage.setItem(sKeys.SUPPLIERS, JSON.stringify([]));
+      localStorage.setItem(sKeys.ORDERS, JSON.stringify([]));
+      localStorage.setItem(sKeys.DAY_CLOSING, JSON.stringify([]));
+      localStorage.setItem(sKeys.SETUP_DONE, 'true');
+    } catch {
+      // ignore
+    }
+
+    // Also register in dev API if available
+    fetch('/api/admin/shops', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId,
+        name: cleanName,
+        mobile: cleanMobile,
+        address: '',
+        tagline: newShopInfo.tagline || '',
+      }),
+    }).catch(() => {});
+
+    return { ok: true, shopId, ownerCode };
+  };
+
   const logoutOwner = () => {
     loadedShopRef.current = null;
+    cloudVerifiedShopRef.current = null;
     try {
       localStorage.removeItem(ACTIVE_SHOP_KEY);
       sessionStorage.removeItem(ACTIVE_SHOP_KEY);
+      localStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+      sessionStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
       localStorage.setItem(EXPLICIT_LOGOUT_KEY, 'true');
     } catch {
       // ignore
     }
+    setActiveStaff(null);
+    setStaffMembers([]);
     setBillingDraft(null);
     setActiveShopId(null);
     setActiveTab('dashboard');
+  };
+
+  // Helper to verify 10-digit Staff mobile uniqueness across local & Firestore directory
+  const ensureStaffMobileUnique = async (
+    cleanMobile: string,
+    excludeStaffId?: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const localConflict = staffMembers.find(
+      (s) => normalizeMobile10(s.mobile) === cleanMobile && s.id !== excludeStaffId
+    );
+    if (localConflict) {
+      return { ok: false, error: 'This mobile number is already assigned to another staff member' };
+    }
+    const dir = readLocalStaffDirectory();
+    if (dir[cleanMobile] && dir[cleanMobile].staffId !== excludeStaffId) {
+      return { ok: false, error: 'This mobile number is already registered with another staff account' };
+    }
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      const cloudExisting = await lookupStaffByMobileInCloud(cleanMobile);
+      if (cloudExisting && cloudExisting.staffId !== excludeStaffId) {
+        return { ok: false, error: 'This mobile number is already registered in cloud to another staff account' };
+      }
+    }
+    return { ok: true };
+  };
+
+  const addStaffMember = async (data: {
+    name: string;
+    mobile: string;
+    pin: string;
+    role: StaffRole;
+  }): Promise<{ ok: boolean; staff?: StaffMember; error?: string }> => {
+    if (activeStaff) return { ok: false, error: 'Only Owner Allowed' };
+    if (!activeShopId) return { ok: false, error: 'No active shop' };
+
+    const cleanName = (data.name || '').trim();
+    const cleanMobile = normalizeMobile10(data.mobile);
+    const cleanPin = (data.pin || '').trim();
+    if (!cleanName) return { ok: false, error: 'Staff name is required' };
+    if (!/^[0-9]{10}$/.test(cleanMobile)) {
+      return { ok: false, error: 'Enter a valid 10-digit mobile number' };
+    }
+    if (!/^[0-9]{4}$/.test(cleanPin)) {
+      return { ok: false, error: 'PIN must be exactly 4 digits' };
+    }
+
+    const uniqueCheck = await ensureStaffMobileUnique(cleanMobile);
+    if (!uniqueCheck.ok) {
+      return { ok: false, error: uniqueCheck.error };
+    }
+
+    const staffId = 'stf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const nowIso = new Date().toISOString();
+    const pinHash = await hashStaffPin(staffId, cleanPin);
+
+    const newMember: StaffMember = {
+      id: staffId,
+      shopId: activeShopId,
+      name: cleanName,
+      mobile: cleanMobile,
+      role: data.role,
+      pinHash,
+      isActive: true,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const nextList = [newMember, ...staffMembers];
+    setStaffMembers(nextList);
+
+    const dirEntry: StaffDirectoryDoc = {
+      mobile: cleanMobile,
+      shopId: activeShopId,
+      staffId,
+      name: cleanName,
+      role: data.role,
+      pinHash,
+      isActive: true,
+      updatedAt: nowIso,
+    };
+    writeLocalStaffDirectoryEntry(dirEntry);
+
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      await syncShopMetaToCloud(activeShopId, { ...shopInfo, id: activeShopId }).catch(() => {});
+      await Promise.all([
+        syncStaffDirectoryEntry(dirEntry),
+        syncShopCollectionToCloud(activeShopId, 'staff', nextList),
+      ]).catch(() => {});
+    }
+
+    return { ok: true, staff: newMember };
+  };
+
+  const updateStaffMember = async (
+    staffId: string,
+    updates: { name: string; mobile: string; role: StaffRole; isActive: boolean }
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (activeStaff) return { ok: false, error: 'Only Owner Allowed' };
+    if (!activeShopId) return { ok: false, error: 'No active shop' };
+
+    const target = staffMembers.find((s) => s.id === staffId);
+    if (!target) return { ok: false, error: 'Staff member not found' };
+
+    const cleanName = (updates.name || '').trim();
+    const cleanMobile = normalizeMobile10(updates.mobile);
+    if (!cleanName) return { ok: false, error: 'Staff name is required' };
+    if (!/^[0-9]{10}$/.test(cleanMobile)) {
+      return { ok: false, error: 'Enter a valid 10-digit mobile number' };
+    }
+
+    const oldMobile = normalizeMobile10(target.mobile);
+    if (cleanMobile !== oldMobile) {
+      const uniqueCheck = await ensureStaffMobileUnique(cleanMobile, staffId);
+      if (!uniqueCheck.ok) return uniqueCheck;
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatedMember: StaffMember = {
+      ...target,
+      name: cleanName,
+      mobile: cleanMobile,
+      role: updates.role,
+      isActive: Boolean(updates.isActive),
+      updatedAt: nowIso,
+    };
+
+    const nextList = staffMembers.map((s) => (s.id === staffId ? updatedMember : s));
+    setStaffMembers(nextList);
+
+    if (cleanMobile !== oldMobile) {
+      removeLocalStaffDirectoryEntry(oldMobile);
+    }
+    const dirEntry: StaffDirectoryDoc = {
+      mobile: cleanMobile,
+      shopId: activeShopId,
+      staffId,
+      name: cleanName,
+      role: updates.role,
+      pinHash: target.pinHash,
+      isActive: Boolean(updates.isActive),
+      updatedAt: nowIso,
+    };
+    writeLocalStaffDirectoryEntry(dirEntry);
+
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      await syncShopMetaToCloud(activeShopId, { ...shopInfo, id: activeShopId }).catch(() => {});
+      const tasks: Promise<unknown>[] = [
+        syncStaffDirectoryEntry(dirEntry),
+        syncShopCollectionToCloud(activeShopId, 'staff', nextList),
+      ];
+      if (cleanMobile !== oldMobile) {
+        tasks.push(deleteStaffDirectoryEntry(oldMobile));
+      }
+      await Promise.all(tasks).catch(() => {});
+    }
+
+    return { ok: true };
+  };
+
+  const changeStaffPin = async (
+    staffId: string,
+    newPin: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (activeStaff) return { ok: false, error: 'Only Owner Allowed' };
+    if (!activeShopId) return { ok: false, error: 'No active shop' };
+
+    const target = staffMembers.find((s) => s.id === staffId);
+    if (!target) return { ok: false, error: 'Staff member not found' };
+
+    const cleanPin = (newPin || '').trim();
+    if (!/^[0-9]{4}$/.test(cleanPin)) {
+      return { ok: false, error: 'New PIN must be exactly 4 digits' };
+    }
+
+    const newPinHash = await hashStaffPin(staffId, cleanPin);
+    const nowIso = new Date().toISOString();
+    const updatedMember: StaffMember = {
+      ...target,
+      pinHash: newPinHash,
+      updatedAt: nowIso,
+    };
+
+    const nextList = staffMembers.map((s) => (s.id === staffId ? updatedMember : s));
+    setStaffMembers(nextList);
+
+    const cleanMobile = normalizeMobile10(target.mobile);
+    const dirEntry: StaffDirectoryDoc = {
+      mobile: cleanMobile,
+      shopId: activeShopId,
+      staffId,
+      name: target.name,
+      role: target.role,
+      pinHash: newPinHash,
+      isActive: target.isActive,
+      updatedAt: nowIso,
+    };
+    writeLocalStaffDirectoryEntry(dirEntry);
+
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      await syncShopMetaToCloud(activeShopId, { ...shopInfo, id: activeShopId }).catch(() => {});
+      await Promise.all([
+        syncStaffDirectoryEntry(dirEntry),
+        syncShopCollectionToCloud(activeShopId, 'staff', nextList),
+      ]).catch(() => {});
+    }
+
+    return { ok: true };
+  };
+
+  const toggleStaffActive = async (staffId: string): Promise<{ ok: boolean; error?: string }> => {
+    if (activeStaff) return { ok: false, error: 'Only Owner Allowed' };
+    const target = staffMembers.find((s) => s.id === staffId);
+    if (!target) return { ok: false, error: 'Staff member not found' };
+    return updateStaffMember(staffId, {
+      name: target.name,
+      mobile: target.mobile,
+      role: target.role,
+      isActive: !target.isActive,
+    });
+  };
+
+  const deleteStaffMember = async (staffId: string): Promise<{ ok: boolean; error?: string }> => {
+    if (activeStaff) return { ok: false, error: 'Only Owner Allowed' };
+    if (!activeShopId) return { ok: false, error: 'No active shop' };
+
+    const target = staffMembers.find((s) => s.id === staffId);
+    if (!target) return { ok: false, error: 'Staff member not found' };
+
+    const nextList = staffMembers.filter((s) => s.id !== staffId);
+    setStaffMembers(nextList);
+
+    const cleanMobile = normalizeMobile10(target.mobile);
+    removeLocalStaffDirectoryEntry(cleanMobile);
+
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      await Promise.all([
+        deleteStaffDirectoryEntry(cleanMobile),
+        syncShopCollectionToCloud(activeShopId, 'staff', nextList),
+      ]).catch(() => {});
+    }
+
+    return { ok: true };
   };
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -834,7 +1582,7 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [bills, activeShopId]);
 
   useEffect(() => {
-    if (!activeShopId || loadedShopRef.current !== activeShopId) return;
+    if (!activeShopId || loadedShopRef.current !== activeShopId || activeStaff) return;
     const sKeys = getShopStorageKeys(activeShopId);
     try {
       localStorage.setItem(sKeys.SUPPLIERS, JSON.stringify(suppliers));
@@ -842,10 +1590,10 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (e) {
       console.error('Failed to save suppliers', e);
     }
-  }, [suppliers, activeShopId]);
+  }, [suppliers, activeShopId, activeStaff]);
 
   useEffect(() => {
-    if (!activeShopId || loadedShopRef.current !== activeShopId) return;
+    if (!activeShopId || loadedShopRef.current !== activeShopId || activeStaff) return;
     const sKeys = getShopStorageKeys(activeShopId);
     try {
       localStorage.setItem(sKeys.ORDERS, JSON.stringify(customerOrders));
@@ -853,10 +1601,10 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (e) {
       console.error('Failed to save customer orders', e);
     }
-  }, [customerOrders, activeShopId]);
+  }, [customerOrders, activeShopId, activeStaff]);
 
   useEffect(() => {
-    if (!activeShopId || loadedShopRef.current !== activeShopId) return;
+    if (!activeShopId || loadedShopRef.current !== activeShopId || activeStaff) return;
     const sKeys = getShopStorageKeys(activeShopId);
     try {
       localStorage.setItem(sKeys.DAY_CLOSING, JSON.stringify(dayClosingRecords));
@@ -864,23 +1612,213 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (e) {
       console.error('Failed to save day closing records', e);
     }
-  }, [dayClosingRecords, activeShopId]);
+  }, [dayClosingRecords, activeShopId, activeStaff]);
 
-  // Cloud Catalog Sync for Shop-Specific QR & Public Orders
   useEffect(() => {
-    if (!activeShopId || loadedShopRef.current !== activeShopId) return;
-    fetch('/api/shops/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        shopId: activeShopId,
-        shopInfo: { ...shopInfo, id: activeShopId },
-        products,
-      }),
-    }).catch((err) => {
-      console.debug('Cloud shop catalog sync skipped/failed:', err);
-    });
-  }, [shopInfo, products, activeShopId]);
+    if (!activeShopId || loadedShopRef.current !== activeShopId || activeStaff) return;
+    const sKeys = getShopStorageKeys(activeShopId);
+    try {
+      localStorage.setItem(sKeys.STAFF, JSON.stringify(staffMembers));
+      saveToIndexedDb(`${activeShopId}:staffMembers`, staffMembers);
+    } catch (e) {
+      console.error('Failed to save staff members', e);
+    }
+  }, [staffMembers, activeShopId, activeStaff]);
+
+  // Verify Staff active status when online (immediately blocks deactivated staff)
+  useEffect(() => {
+    if (!activeStaff || !activeShopId) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    let cancelled = false;
+    lookupStaffByMobileInCloud(activeStaff.mobile)
+      .then((cloudEntry) => {
+        if (cancelled || !cloudEntry) return;
+        writeLocalStaffDirectoryEntry(cloudEntry);
+        if (!cloudEntry.isActive) {
+          logoutOwner();
+        } else if (cloudEntry.role !== activeStaff.role || cloudEntry.name !== activeStaff.name) {
+          const updatedSession: ActiveStaffSession = {
+            ...activeStaff,
+            name: cloudEntry.name,
+            role: cloudEntry.role,
+          };
+          setActiveStaff(updatedSession);
+          try {
+            if (localStorage.getItem(ACTIVE_STAFF_SESSION_KEY)) {
+              localStorage.setItem(ACTIVE_STAFF_SESSION_KEY, JSON.stringify(updatedSession));
+            } else if (sessionStorage.getItem(ACTIVE_STAFF_SESSION_KEY)) {
+              sessionStorage.setItem(ACTIVE_STAFF_SESSION_KEY, JSON.stringify(updatedSession));
+            }
+          } catch {
+            // ignore
+          }
+          if (updatedSession.role === 'CASHIER') {
+            setActiveTab('billing');
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStaff?.staffId, activeStaff?.mobile, activeShopId]);
+
+  // Startup / session guard: if device auto-opened a persisted activeShopId, verify it still exists
+  // in Firestore before allowing any cloud sync so deleted shops can NEVER auto-recreate themselves.
+  useEffect(() => {
+    if (!activeShopId || isDeletingShopRef.current) return;
+    if (cloudVerifiedShopRef.current === activeShopId) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    let cancelled = false;
+    const shopId = activeShopId;
+    verifyOwnerCodeInCloud(shopId)
+      .then((cloudShop) => {
+        if (cancelled || isDeletingShopRef.current) return;
+        if (!cloudShop) {
+          deletedShopIdsRef.current.add(shopId);
+          purgeLocalShopStorage(shopId, true);
+          deleteShopOfflineData(shopId).catch(() => {});
+          fetch(`/api/shops/${encodeURIComponent(shopId)}`, { method: 'DELETE' }).catch(() => {});
+          loadedShopRef.current = null;
+          cloudVerifiedShopRef.current = null;
+          setActiveStaff(null);
+          setStaffMembers([]);
+          setBillingDraft(null);
+          setActiveShopId(null);
+        } else {
+          cloudVerifiedShopRef.current = shopId;
+        }
+      })
+      .catch(() => {
+        // Offline or temporarily unreachable: keep working offline without forcing logout
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeShopId, purgeLocalShopStorage]);
+
+  // Cloud Catalog Sync for Shop-Specific QR & Public Orders + Firebase Free-Tier Local-First Sync
+  useEffect(() => {
+    if (
+      !activeShopId ||
+      loadedShopRef.current !== activeShopId ||
+      isDeletingShopRef.current ||
+      deletedShopIdsRef.current.has(activeShopId)
+    ) {
+      return;
+    }
+    const shopId = activeShopId;
+
+    // Staff sessions MUST NEVER overwrite shopInfo, staff, supplierLedger, or dayClosings
+    if (activeStaff) {
+      const timer = window.setTimeout(() => {
+        if (isDeletingShopRef.current || loadedShopRef.current !== shopId || deletedShopIdsRef.current.has(shopId)) return;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+        Promise.all([
+          upsertShopCollectionToCloud(shopId, 'products', products),
+          upsertShopCollectionToCloud(shopId, 'bills', bills),
+        ]).catch(() => {});
+      }, 1500);
+      return () => window.clearTimeout(timer);
+    }
+
+    if (cloudVerifiedShopRef.current === shopId) {
+      fetch('/api/shops/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopId,
+          shopInfo: { ...shopInfo, id: shopId },
+          products,
+        }),
+      }).catch((err) => {
+        console.debug('Cloud shop catalog sync skipped/failed:', err);
+      });
+    }
+
+    // Debounced Local-First background sync to Firebase Firestore (Owner)
+    // Only sync once cloud existence is confirmed so a deleted shop can NEVER be auto-recreated.
+    const timer = window.setTimeout(() => {
+      if (
+        isDeletingShopRef.current ||
+        loadedShopRef.current !== shopId ||
+        deletedShopIdsRef.current.has(shopId) ||
+        cloudVerifiedShopRef.current !== shopId
+      ) {
+        return;
+      }
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      syncShopMetaToCloud(shopId, { ...shopInfo, id: shopId })
+        .then(() => {
+          if (isDeletingShopRef.current || loadedShopRef.current !== shopId || deletedShopIdsRef.current.has(shopId)) return;
+          return Promise.all([
+            syncShopCollectionToCloud(shopId, 'products', products),
+            syncShopCollectionToCloud(shopId, 'bills', bills),
+            syncShopCollectionToCloud(shopId, 'orders', customerOrders),
+            syncShopCollectionToCloud(shopId, 'dayClosings', dayClosingRecords),
+            syncShopCollectionToCloud(shopId, 'supplierLedger', suppliers),
+            syncShopCollectionToCloud(shopId, 'staff', staffMembers),
+            ...staffMembers.map((st) =>
+              syncStaffDirectoryEntry({
+                mobile: st.mobile,
+                shopId,
+                staffId: st.id,
+                name: st.name,
+                role: st.role,
+                pinHash: st.pinHash,
+                isActive: st.isActive,
+                updatedAt: st.updatedAt,
+              })
+            ),
+          ]);
+        })
+        .catch(() => {
+          // Offline-first: silent retry when back online
+        });
+    }, 1500);
+
+    return () => window.clearTimeout(timer);
+  }, [shopInfo, products, bills, customerOrders, dayClosingRecords, suppliers, staffMembers, activeShopId, activeStaff]);
+
+  // Auto-sync to Firebase when device comes back online
+  useEffect(() => {
+    if (!activeShopId) return;
+    const shopId = activeShopId;
+    const handleOnline = () => {
+      if (
+        isDeletingShopRef.current ||
+        loadedShopRef.current !== shopId ||
+        deletedShopIdsRef.current.has(shopId) ||
+        cloudVerifiedShopRef.current !== shopId
+      ) {
+        return;
+      }
+      if (activeStaff) {
+        Promise.all([
+          upsertShopCollectionToCloud(shopId, 'products', products),
+          upsertShopCollectionToCloud(shopId, 'bills', bills),
+        ]).catch(() => {});
+        return;
+      }
+      syncShopMetaToCloud(shopId, { ...shopInfo, id: shopId })
+        .then(() => {
+          if (isDeletingShopRef.current || loadedShopRef.current !== shopId || deletedShopIdsRef.current.has(shopId)) return;
+          return Promise.all([
+            syncShopCollectionToCloud(shopId, 'products', products),
+            syncShopCollectionToCloud(shopId, 'bills', bills),
+            syncShopCollectionToCloud(shopId, 'orders', customerOrders),
+            syncShopCollectionToCloud(shopId, 'dayClosings', dayClosingRecords),
+            syncShopCollectionToCloud(shopId, 'supplierLedger', suppliers),
+            syncShopCollectionToCloud(shopId, 'staff', staffMembers),
+          ]);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [activeShopId, activeStaff, shopInfo, products, bills, customerOrders, dayClosingRecords, suppliers, staffMembers]);
 
   // Merge cloud orders cleanly (supports adding new orders AND syncing status changes)
   const mergeCloudOrders = useCallback((cloudList: CustomerOrder[]) => {
@@ -1049,19 +1987,27 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+    if (activeStaff?.role === 'CASHIER') return newProduct;
     setProducts((prev) => [newProduct, ...prev]);
     return newProduct;
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
+    if (activeStaff?.role === 'CASHIER') return;
     setProducts((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
-      )
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        // Staff (Manager) must never overwrite Owner's purchasePrice
+        const safeUpdates = activeStaff
+          ? { ...updates, purchasePrice: p.purchasePrice }
+          : updates;
+        return { ...p, ...safeUpdates, updatedAt: new Date().toISOString() };
+      })
     );
   };
 
   const deleteProduct = (id: string) => {
+    if (activeStaff) return; // Staff cannot delete data
     setProducts((prev) => prev.filter((p) => p.id !== id));
   };
 
@@ -1070,6 +2016,7 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     quantityToAdd: number,
     newPurchasePrice?: number
   ) => {
+    if (activeStaff?.role === 'CASHIER') return;
     setProducts((prev) =>
       prev.map((p) => {
         if (p.id === productId) {
@@ -1078,7 +2025,7 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ...p,
             stockQuantity: updatedStock,
             purchasePrice:
-              newPurchasePrice !== undefined && newPurchasePrice > 0
+              !activeStaff && newPurchasePrice !== undefined && newPurchasePrice > 0
                 ? newPurchasePrice
                 : p.purchasePrice,
             updatedAt: new Date().toISOString(),
@@ -1178,6 +2125,17 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       id: 'bill_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
       billNumber,
       date: nowIso,
+      ...(activeStaff
+        ? {
+            createdByStaffId: activeStaff.staffId,
+            createdByName: activeStaff.name,
+            createdByRole: activeStaff.role,
+            createdByMobile: activeStaff.mobile,
+            billByLabel: formatBillByLabel(activeStaff.name, activeStaff.role, activeStaff.mobile),
+          }
+        : {
+            createdByRole: 'OWNER' as const,
+          }),
     };
 
     // AUTOMATIC STOCK DEDUCTION ONLY FOR FINAL BILLS (NOT FOR ESTIMATES!)
@@ -1452,6 +2410,7 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const cancelBill = (billId: string) => {
+    if (activeStaff) return; // Staff cannot delete/cancel old bills
     const targetBill = bills.find((b) => b.id === billId);
     if (!targetBill) return;
 
@@ -1675,42 +2634,101 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setDayClosingRecords([]);
   };
 
-  const fullAppReset = async (): Promise<void> => {
+  const finalizeResetLogout = useCallback(() => {
+    loadedShopRef.current = null;
+    isDeletingShopRef.current = false;
     try {
-      localStorage.removeItem(STORAGE_KEYS.SHOP_INFO);
-      localStorage.removeItem(STORAGE_KEYS.PRODUCTS);
-      localStorage.removeItem(STORAGE_KEYS.BILLS);
-      localStorage.removeItem(STORAGE_KEYS.REFILLS);
-      localStorage.removeItem(STORAGE_KEYS.SUPPLIERS);
-      localStorage.removeItem(STORAGE_KEYS.ORDERS);
-      localStorage.removeItem(STORAGE_KEYS.DAY_CLOSING);
-      localStorage.setItem(STORAGE_KEYS.SETUP_DONE, 'false');
-      await clearAllOfflineData();
+      localStorage.removeItem(ACTIVE_SHOP_KEY);
+      sessionStorage.removeItem(ACTIVE_SHOP_KEY);
+      localStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+      sessionStorage.removeItem(ACTIVE_STAFF_SESSION_KEY);
+      localStorage.setItem(EXPLICIT_LOGOUT_KEY, 'true');
+    } catch {
+      // ignore
+    }
+    setActiveStaff(null);
+    setStaffMembers([]);
+    setBillingDraft(null);
+    setActiveShopId(null);
+    setActiveTab('dashboard');
+    setIsSetupComplete(false);
+  }, []);
+
+  const fullAppReset = async (options?: { deferLogout?: boolean }): Promise<void> => {
+    if (activeStaff) {
+      throw new Error('Only the shop owner can delete the shop');
+    }
+    const targetShopId = (activeShopId || shopInfo.id || '').trim().toLowerCase();
+    if (!targetShopId) {
+      throw new Error('No active shop selected');
+    }
+
+    // Pause background sync so debounced writes cannot recreate the shop during deletion
+    isDeletingShopRef.current = true;
+    const prevLoadedShop = loadedShopRef.current;
+    loadedShopRef.current = null;
+    cloudVerifiedShopRef.current = null;
+
+    // 1. Delete from Firebase Firestore FIRST (throws on offline/error so local data is preserved)
+    try {
+      const localStaffMobiles = staffMembers.map((st) => st.mobile).filter(Boolean);
+      await deleteShopCompletelyFromCloud(targetShopId, localStaffMobiles);
+    } catch (cloudError) {
+      isDeletingShopRef.current = false;
+      loadedShopRef.current = prevLoadedShop;
+      cloudVerifiedShopRef.current = prevLoadedShop;
+      throw cloudError;
+    }
+
+    deletedShopIdsRef.current.add(targetShopId);
+
+    // 2. Also delete ONLY this shop from local server cache if running
+    try {
+      await fetch(`/api/shops/${encodeURIComponent(targetShopId)}`, { method: 'DELETE' });
+    } catch {
+      // Non-fatal if offline/static mode after Firestore deletion succeeded
+    }
+
+    // 3. Only after Firestore deletion succeeds, clear ALL local storage for this shop & session
+    try {
+      purgeLocalShopStorage(targetShopId, true);
+      await deleteShopOfflineData(targetShopId);
     } catch (e) {
       console.error('LocalStorage reset error', e);
     }
 
+    // 4. Clear in-memory shop state (explicitly blank id/name/mobile so old Owner Code never lingers)
     setProducts([]);
     setBills([]);
     setSuppliers([]);
     setCustomerOrders([]);
     setDayClosingRecords([]);
+    setStaffMembers([]);
     setBillingDraft(null);
-    setShopInfo(
-      ensureShopInfoDefaults(
-        {
-          ...INITIAL_SHOP_INFO,
-          name: '',
-          mobile: '',
-          address: '',
-          tagline: '',
-          gstin: '',
-        },
-        language
-      )
-    );
-    setActiveTab('dashboard');
+    setShopInfo({
+      id: '',
+      name: '',
+      address: '',
+      mobile: '',
+      alternateMobile: '',
+      tagline: '',
+      gstin: '',
+      upiId: '',
+      payeeName: '',
+      showUpiQrOnBill: false,
+      bankName: '',
+      accountNumber: '',
+      ifscCode: '',
+      udharTemplates: { english: '', hindi: '', hinglish: '' },
+      billFooterTemplates: { english: '', hindi: '', hinglish: '' },
+      logoUrl: '',
+      showLogoOnBill: false,
+    });
     setIsSetupComplete(false);
+
+    if (!options?.deferLogout) {
+      finalizeResetLogout();
+    }
   };
 
   const completeSetup = (newShopInfo?: Partial<ShopInfo>, loadDemoProducts: boolean = false) => {
@@ -1776,6 +2794,7 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isSetupComplete,
         setIsSetupComplete,
         fullAppReset,
+        finalizeResetLogout,
         completeSetup,
         addProduct,
         updateProduct,
@@ -1827,8 +2846,17 @@ export const ShopProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         darkMode,
         setDarkMode,
         activeShopId,
+        activeStaff,
+        staffMembers,
         loginWithOwnerCode,
+        loginWithStaffCredentials,
+        createNewShop,
         logoutOwner,
+        addStaffMember,
+        updateStaffMember,
+        changeStaffPin,
+        toggleStaffActive,
+        deleteStaffMember,
       }}
     >
       {children}

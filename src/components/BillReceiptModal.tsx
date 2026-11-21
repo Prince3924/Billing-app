@@ -24,7 +24,8 @@ export const BillReceiptModal: React.FC<BillReceiptModalProps> = ({
   onClose,
   isNewBill = false,
 }) => {
-  const { bills, updateBill, shopInfo, t, language } = useShop();
+  const { bills, updateBill, shopInfo, activeStaff, t, language } = useShop();
+  const isStaff = Boolean(activeStaff);
   const bill = billProp ? bills.find((b) => b.id === billProp.id) || billProp : null;
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -379,7 +380,7 @@ export const BillReceiptModal: React.FC<BillReceiptModalProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 p-2 sm:p-4 backdrop-blur-xs flex justify-center items-start min-h-screen py-4 sm:py-6">
+      <div className="keyboard-modal-overlay fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/80 p-2 sm:p-4 backdrop-blur-xs flex justify-center items-start py-4 sm:py-6">
         <div className="relative w-full max-w-lg rounded-2xl bg-white text-slate-900 shadow-2xl border border-slate-200 overflow-hidden my-auto">
           {/* Top Control Bar */}
           <div className="no-print bg-[#0f172a] text-white px-4 py-3 flex items-center justify-between">
@@ -653,6 +654,11 @@ export const BillReceiptModal: React.FC<BillReceiptModalProps> = ({
                     <strong style={{ fontWeight: 700 }}>{bill.customerName}</strong>
                   </p>
                 )}
+                {bill.billByLabel && (
+                  <p style={{ marginTop: '4px', marginBottom: 0, fontSize: '11px', fontWeight: 700, color: '#1e40af' }}>
+                    {bill.billByLabel}
+                  </p>
+                )}
               </div>
               <div style={{ textAlign: 'right' }}>
                 <p style={{ color: '#64748b', fontWeight: 500, margin: 0 }}>
@@ -877,7 +883,7 @@ export const BillReceiptModal: React.FC<BillReceiptModalProps> = ({
 
           {/* Non-printing Quick Note / Serial No. Editor */}
           {isEditingNote && (
-            <div className="no-print bg-[#fffbeb] border-t border-[#fde68a] px-4 py-3 space-y-2">
+            <div className="no-print bg-[#fffbeb] border-t border-[#fde68a] px-4 py-3 space-y-2 keyboard-modal-body">
               <label className="block text-[11px] font-bold uppercase tracking-wider text-[#92400e]">
                 {t('serialNoteSectionTitle')}
               </label>
@@ -918,17 +924,19 @@ export const BillReceiptModal: React.FC<BillReceiptModalProps> = ({
               {t('invoiceHashLabel')}{bill.billNumber}
             </p>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setNoteDraft(bill.notes || '');
-                  setIsEditingNote((v) => !v);
-                }}
-                className="flex items-center gap-1 rounded-xl bg-white hover:bg-[#fef3c7] border border-[#cbd5e1] px-3 py-2 text-xs font-bold text-[#0f172a] transition cursor-pointer"
-              >
-                <Edit className="h-3.5 w-3.5 text-[#d97706]" />
-                <span>{t('editNoteBtn')}</span>
-              </button>
+              {!isStaff && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNoteDraft(bill.notes || '');
+                    setIsEditingNote((v) => !v);
+                  }}
+                  className="flex items-center gap-1 rounded-xl bg-white hover:bg-[#fef3c7] border border-[#cbd5e1] px-3 py-2 text-xs font-bold text-[#0f172a] transition cursor-pointer"
+                >
+                  <Edit className="h-3.5 w-3.5 text-[#d97706]" />
+                  <span>{t('editNoteBtn')}</span>
+                </button>
+              )}
               <button
                 onClick={onClose}
                 className="rounded-xl bg-[#0f172a] hover:bg-[#1e293b] px-5 py-2 text-xs font-bold text-white transition active:scale-95 cursor-pointer"

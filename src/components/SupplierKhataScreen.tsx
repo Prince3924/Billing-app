@@ -425,8 +425,8 @@ export const SupplierKhataScreen: React.FC = () => {
 
       {/* MODAL 1: ADD NEW SUPPLIER */}
       {isAddSupplierModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-md my-auto rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-extrabold text-slate-900 text-base">
                 🤝 {t('addSupplierBtn')}
@@ -439,7 +439,7 @@ export const SupplierKhataScreen: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateSupplier} className="mt-4 space-y-3">
+            <form onSubmit={handleCreateSupplier} className="mt-4 space-y-3 keyboard-modal-body">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
                   {t('supplierNameLabel')} <span className="text-red-500">*</span>
@@ -504,8 +504,8 @@ export const SupplierKhataScreen: React.FC = () => {
 
       {/* MODAL 2: ADD PURCHASE / UDHAR ENTRY */}
       {isAddPurchaseModalOpen && selectedSupplier && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-md my-auto rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-extrabold text-slate-900 text-base">
                 📦 {t('addPurchaseUdharBtn')} - {selectedSupplier.name}
@@ -518,7 +518,7 @@ export const SupplierKhataScreen: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreatePurchase} className="mt-4 space-y-3">
+            <form onSubmit={handleCreatePurchase} className="mt-4 space-y-3 keyboard-modal-body">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
                   {t('purchaseDescLabel')}
@@ -597,8 +597,8 @@ export const SupplierKhataScreen: React.FC = () => {
 
       {/* MODAL 3: RECORD PAYMENT */}
       {isPaymentModalOpen && selectedSupplier && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
+        <div className="keyboard-modal-overlay fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 p-4 backdrop-blur-xs overflow-y-auto overscroll-contain">
+          <div className="w-full max-w-md my-auto rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-extrabold text-slate-900 text-base">
                 💸 {t('paySupplierBtn')} - {selectedSupplier.name}
@@ -611,7 +611,7 @@ export const SupplierKhataScreen: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleRecordPayment} className="mt-4 space-y-3">
+            <form onSubmit={handleRecordPayment} className="mt-4 space-y-3 keyboard-modal-body">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
                   {t('paymentAmountLabel')} <span className="text-red-500">*</span>

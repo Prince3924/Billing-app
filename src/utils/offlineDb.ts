@@ -162,3 +162,48 @@ export async function clearAllOfflineData(): Promise<void> {
     console.warn('Could not delete database:', err);
   }
 }
+
+/**
+ * Remove offline IndexedDB data strictly for a specific shopId (plus legacy unscoped keys).
+ * Preserves other shops' offline data if multiple shops exist on the device.
+ */
+export async function deleteShopOfflineData(shopId: string): Promise<void> {
+  const cleanId = (shopId || '').trim().toLowerCase();
+  if (!cleanId) return;
+  const legacyKeys = new Set([
+    'shopInfo',
+    'products',
+    'bills',
+    'suppliers',
+    'customerOrders',
+    'dayClosingRecords',
+    'staffMembers',
+  ]);
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(['app_state', 'sync_queue'], 'readwrite');
+      const stateStore = tx.objectStore('app_state');
+      const keysReq = stateStore.getAllKeys();
+      keysReq.onsuccess = () => {
+        const allKeys = (keysReq.result || []) as Array<IDBValidKey>;
+        let remainingOtherShopKeys = 0;
+        for (const k of allKeys) {
+          const keyStr = String(k);
+          if (keyStr.startsWith(`${cleanId}:`) || legacyKeys.has(keyStr)) {
+            stateStore.delete(k);
+          } else if (keyStr.includes(':')) {
+            remainingOtherShopKeys++;
+          }
+        }
+        if (remainingOtherShopKeys === 0) {
+          tx.objectStore('sync_queue').clear();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('Could not delete shop IndexedDB records:', err);
+  }
+}
